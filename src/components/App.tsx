@@ -12,13 +12,17 @@ interface AppProps {
 }
 
 const menuItems = [
-  { label: 'List connected devices (DHCP)', value: 'devices' },
-  { label: 'WiFi clients', value: 'wifi' },
-  { label: 'Router status (WAN/device info)', value: 'status' },
-  { label: 'System logs', value: 'logs' },
-  { label: 'Firewall rules', value: 'firewall' },
-  { label: 'Quit', value: 'quit' },
+  { label: '[d] List connected devices (DHCP)', value: 'devices', key: 'd' },
+  { label: '[w] WiFi clients', value: 'wifi', key: 'w' },
+  { label: '[s] Router status (WAN/device info)', value: 'status', key: 's' },
+  { label: '[l] System logs', value: 'logs', key: 'l' },
+  { label: '[f] Firewall rules', value: 'firewall', key: 'f' },
+  { label: '[q] Quit', value: 'quit', key: 'q' },
 ];
+
+const shortcuts: Record<string, string> = Object.fromEntries(
+  menuItems.map((item) => [item.key, item.value])
+);
 
 function Menu() {
   const { exit } = useApp();
@@ -31,6 +35,12 @@ function Menu() {
     }
     setSelected(item.value);
   };
+
+  useInput((input) => {
+    if (selected) return;
+    const command = shortcuts[input];
+    if (command) handleSelect({ value: command });
+  });
 
   const handleBack = () => setSelected(null);
 

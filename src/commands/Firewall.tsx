@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Text, Box } from 'ink';
 import { Status } from '../components/Status.js';
-import { Table } from '../components/Table.js';
+import { InteractiveTable } from '../components/InteractiveTable.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
 import { BackPrompt } from '../components/BackPrompt.js';
 import { discoverRouter } from '../lib/router-discovery.js';
@@ -103,7 +103,7 @@ export function Firewall({ onBack }: { onBack?: () => void }) {
       </Box>
       {rows.length > 0 ? (
         <Box marginTop={1}>
-          <Table
+          <InteractiveTable
             data={rows}
             columns={[
               { key: 'name', label: 'Rule Name', width: 26, color: 'cyan' },
@@ -114,17 +114,17 @@ export function Firewall({ onBack }: { onBack?: () => void }) {
               { key: 'remoteAddr', label: 'Remote IP', width: 18 },
               { key: 'remotePort', label: 'R.Port', width: 12 },
             ]}
+            ipKey="localAddr"
+            onBack={onBack}
           />
         </Box>
       ) : (
-        <Box marginTop={1}>
+        <Box flexDirection="column" marginTop={1}>
           <Text dimColor>No user-defined firewall rules.</Text>
+          <Text dimColor>{rows.length} user-defined rules</Text>
+          <BackPrompt onBack={onBack} />
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>{rows.length} user-defined rules</Text>
-      </Box>
-      <BackPrompt onBack={onBack} />
     </Box>
   );
 }

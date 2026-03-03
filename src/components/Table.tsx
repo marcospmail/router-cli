@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text, Box } from 'ink';
 
-interface Column<T> {
+export interface Column<T> {
   key: keyof T;
   label: string;
   width?: number;
@@ -13,6 +13,7 @@ interface Column<T> {
 interface TableProps<T extends Record<string, unknown>> {
   data: T[];
   columns: Column<T>[];
+  highlightRow?: number;
 }
 
 function pad(str: string, width: number, align: 'left' | 'right' = 'left'): string {
@@ -20,7 +21,7 @@ function pad(str: string, width: number, align: 'left' | 'right' = 'left'): stri
   return align === 'right' ? truncated.padStart(width) : truncated.padEnd(width);
 }
 
-export function Table<T extends Record<string, unknown>>({ data, columns }: TableProps<T>) {
+export function Table<T extends Record<string, unknown>>({ data, columns, highlightRow }: TableProps<T>) {
   const colWidths = columns.map((col) => {
     const headerLen = col.label.length;
     const maxDataLen = data.reduce((max, row) => {
@@ -42,19 +43,23 @@ export function Table<T extends Record<string, unknown>>({ data, columns }: Tabl
         ))}
       </Text>
       <Text dimColor>─{separator}─</Text>
-      {data.map((row, rowIdx) => (
-        <Text key={rowIdx}>
-          {columns.map((col, i) => {
-            const val = String(row[col.key] ?? '');
-            const cellColor = col.colorFn ? col.colorFn(val) : col.color;
-            return (
-              <Text key={String(col.key)} color={cellColor}>
-                {pad(val, colWidths[i], col.align)}{i < columns.length - 1 ? ' │ ' : ''}
-              </Text>
-            );
-          })}
-        </Text>
-      ))}
+      {data.map((row, rowIdx) => {
+        const isHighlighted = highlightRow === rowIdx;
+        return (
+          <Text key={rowIdx} backgroundColor={isHighlighted ? 'blue' : undefined}>
+            {isHighlighted ? '▸ ' : '  '}
+            {columns.map((col, i) => {
+              const val = String(row[col.key] ?? '');
+              const cellColor = isHighlighted ? 'white' : (col.colorFn ? col.colorFn(val) : col.color);
+              return (
+                <Text key={String(col.key)} color={cellColor} bold={isHighlighted}>
+                  {pad(val, colWidths[i], col.align)}{i < columns.length - 1 ? ' │ ' : ''}
+                </Text>
+              );
+            })}
+          </Text>
+        );
+      })}
     </Box>
   );
 }

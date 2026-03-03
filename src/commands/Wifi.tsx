@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Text, Box } from 'ink';
 import { Status } from '../components/Status.js';
-import { Table } from '../components/Table.js';
+import { InteractiveTable } from '../components/InteractiveTable.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
 import { BackPrompt } from '../components/BackPrompt.js';
 import { discoverRouter } from '../lib/router-discovery.js';
@@ -96,9 +96,12 @@ export function Wifi({ onBack }: { onBack?: () => void }) {
     <Box flexDirection="column">
       <Status label="Router" state="success" detail={routerIp} />
       <Text bold color="cyan">{'\n'}WiFi Clients ({clients.length})</Text>
+      <Box marginTop={1}>
+        <Text dimColor>5GHz: {count5} clients  |  2.4GHz: {count24} clients</Text>
+      </Box>
       {clients.length > 0 ? (
         <Box marginTop={1}>
-          <Table
+          <InteractiveTable
             data={clients}
             columns={[
               { key: 'band', label: 'Band', width: 8, color: 'yellow' },
@@ -107,17 +110,16 @@ export function Wifi({ onBack }: { onBack?: () => void }) {
               { key: 'mac', label: 'MAC', width: 18 },
               { key: 'connected', label: 'Connected', width: 12 },
             ]}
+            ipKey="ip"
+            onBack={onBack}
           />
         </Box>
       ) : (
-        <Box marginTop={1}>
+        <Box flexDirection="column" marginTop={1}>
           <Text dimColor>No WiFi clients connected.</Text>
+          <BackPrompt onBack={onBack} />
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>5GHz: {count5} clients  |  2.4GHz: {count24} clients</Text>
-      </Box>
-      <BackPrompt onBack={onBack} />
     </Box>
   );
 }

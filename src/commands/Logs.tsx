@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Text, Box } from 'ink';
 import { Status } from '../components/Status.js';
-import { Table } from '../components/Table.js';
+import { InteractiveTable } from '../components/InteractiveTable.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
 import { BackPrompt } from '../components/BackPrompt.js';
 import { discoverRouter } from '../lib/router-discovery.js';
@@ -107,7 +107,7 @@ export function Logs({ onBack }: { onBack?: () => void }) {
       <Status label="Router" state="success" detail={routerIp} />
       <Text bold color="cyan">{'\n'}System Logs ({logs.length} entries)</Text>
       <Box marginTop={1}>
-        <Table
+        <InteractiveTable
           data={logs}
           columns={[
             { key: 'date', label: 'Date', width: 18 },
@@ -116,9 +116,9 @@ export function Logs({ onBack }: { onBack?: () => void }) {
             { key: 'module', label: 'Module', width: 14 },
             { key: 'message', label: 'Message', width: 60 },
           ]}
+          onBack={onBack}
         />
       </Box>
-      <BackPrompt onBack={onBack} />
     </Box>
   );
 }

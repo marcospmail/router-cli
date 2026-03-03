@@ -7,6 +7,7 @@ import { BackPrompt } from '../components/BackPrompt.js';
 import { discoverRouter } from '../lib/router-discovery.js';
 import { login, getWifiClients, type WifiClient } from '../lib/router-auth.js';
 import { getCredentials, saveCredentials } from '../lib/credentials.js';
+import { getDeviceInfo } from '../lib/devices.js';
 
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'done' | 'error';
 
@@ -15,6 +16,7 @@ interface ClientRow {
   band: string;
   hostname: string;
   ip: string;
+  device: string;
   connected: string;
 }
 
@@ -37,13 +39,17 @@ export function Wifi({ onBack }: { onBack?: () => void }) {
       setPhase('fetch');
       const wifiClients = await getWifiClients(ip, cookie);
 
-      const rows: ClientRow[] = wifiClients.map((c) => ({
-        mac: c.mac,
-        band: c.band,
-        hostname: c.hostname,
-        ip: c.ip,
-        connected: c.connectedTime,
-      }));
+      const rows: ClientRow[] = wifiClients.map((c) => {
+        const info = getDeviceInfo(c.ip);
+        return {
+          mac: c.mac,
+          band: c.band,
+          hostname: c.hostname,
+          ip: c.ip,
+          device: info?.name ?? 'Unknown',
+          connected: c.connectedTime,
+        };
+      });
 
       setClients(rows);
       setPhase('done');
@@ -105,7 +111,8 @@ export function Wifi({ onBack }: { onBack?: () => void }) {
             data={clients}
             columns={[
               { key: 'band', label: 'Band', width: 8, color: 'yellow' },
-              { key: 'hostname', label: 'Hostname', width: 24 },
+              { key: 'device', label: 'Device', width: 24 },
+              { key: 'hostname', label: 'Hostname', width: 20 },
               { key: 'ip', label: 'IP', width: 16 },
               { key: 'mac', label: 'MAC', width: 18 },
               { key: 'connected', label: 'Connected', width: 12 },

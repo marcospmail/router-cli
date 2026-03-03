@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Text, Box } from 'ink';
 import { Status } from '../components/Status.js';
-import { Table } from '../components/Table.js';
+import { InteractiveTable } from '../components/InteractiveTable.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
+import { BackPrompt } from '../components/BackPrompt.js';
 import { discoverRouter } from '../lib/router-discovery.js';
 import { login, getDhcpLeases, type DhcpLease } from '../lib/router-auth.js';
 import { getCredentials, saveCredentials } from '../lib/credentials.js';
 import { getDeviceInfo } from '../lib/devices.js';
-import { BackPrompt } from '../components/BackPrompt.js';
 
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'done' | 'error';
 
@@ -108,7 +108,10 @@ export function Devices({ onBack }: { onBack?: () => void }) {
       <Status label="Router" state="success" detail={routerIp} />
       <Text bold color="cyan">{'\n'}Connected Devices ({devices.length})</Text>
       <Box marginTop={1}>
-        <Table
+        <Text dimColor>Categories: {categories.join(', ')}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <InteractiveTable
           data={devices}
           columns={[
             { key: 'ip', label: 'IP', width: 16 },
@@ -118,12 +121,10 @@ export function Devices({ onBack }: { onBack?: () => void }) {
             { key: 'hostname', label: 'Hostname', width: 20 },
             { key: 'lease', label: 'Lease', width: 10 },
           ]}
+          ipKey="ip"
+          onBack={onBack}
         />
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor>Categories: {categories.join(', ')}</Text>
-      </Box>
-      <BackPrompt onBack={onBack} />
     </Box>
   );
 }

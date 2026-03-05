@@ -6,6 +6,7 @@ import { Logs } from '../commands/Logs.js';
 import { Firewall } from '../commands/Firewall.js';
 import { WanStatus } from '../commands/WanStatus.js';
 import { Wifi } from '../commands/Wifi.js';
+import { Reboot } from '../commands/Reboot.js';
 
 interface AppProps {
   command: string;
@@ -17,6 +18,7 @@ const menuItems = [
   { label: '[s] Router status (WAN/device info)', value: 'status', key: 's' },
   { label: '[l] System logs', value: 'logs', key: 'l' },
   { label: '[f] Firewall rules', value: 'firewall', key: 'f' },
+  { label: '[r] Reboot router', value: 'reboot', key: 'r' },
   { label: '[q] Quit', value: 'quit', key: 'q' },
 ];
 
@@ -70,6 +72,7 @@ function HelpMessage() {
       <Text>  <Text color="green">status</Text>       Router status (WAN, device info, GPON)</Text>
       <Text>  <Text color="green">logs</Text>         View system logs</Text>
       <Text>  <Text color="green">firewall</Text>     View firewall rules</Text>
+      <Text>  <Text color="green">reboot</Text>       Reboot the router</Text>
       <Text>  <Text color="green">help</Text>         Show this help message</Text>
       <Text>{''}</Text>
       <Text bold>Flags:</Text>
@@ -92,6 +95,8 @@ function CommandView({ command, onBack }: { command: string; onBack?: () => void
       return <WanStatus onBack={onBack} />;
     case 'wifi':
       return <Wifi onBack={onBack} />;
+    case 'reboot':
+      return <Reboot onBack={onBack} />;
     default:
       return <HelpMessage />;
   }

@@ -1,5 +1,18 @@
 import type { Credentials } from './credentials.js';
 
+const FETCH_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error(`Router unreachable (timed out connecting to ${new URL(url).host})`);
+    }
+    throw err;
+  }
+}
+
 function xorEncode(str: string): string {
   return Array.from(str)
     .map((c) => String.fromCharCode(c.charCodeAt(0) ^ 0x1f))
@@ -8,7 +21,7 @@ function xorEncode(str: string): string {
 
 export async function login(routerIp: string, creds: Credentials): Promise<string> {
   // Step 1: Get session cookie
-  const loginPageRes = await fetch(`http://${routerIp}/login.asp`);
+  const loginPageRes = await fetchWithTimeout(`http://${routerIp}/login.asp`);
   const cookies = loginPageRes.headers.getSetCookie();
   const sessionCookie = cookies.find((c) => c.includes('_httpdSessionId_'));
   if (!sessionCookie) {
@@ -25,7 +38,7 @@ export async function login(routerIp: string, creds: Credentials): Promise<strin
     loginPassword: encodedPass,
   });
 
-  await fetch(`http://${routerIp}/cgi-bin/te_acceso_router.cgi`, {
+  await fetchWithTimeout(`http://${routerIp}/cgi-bin/te_acceso_router.cgi`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -36,7 +49,7 @@ export async function login(routerIp: string, creds: Credentials): Promise<strin
   });
 
   // Step 3: Verify login by checking we don't get redirected back to login
-  const verifyRes = await fetch(`http://${routerIp}/settings-local-network.asp`, {
+  const verifyRes = await fetchWithTimeout(`http://${routerIp}/settings-local-network.asp`, {
     headers: { Cookie: cookieValue },
   });
   const verifyBody = await verifyRes.text();
@@ -50,7 +63,7 @@ export async function login(routerIp: string, creds: Credentials): Promise<strin
 export async function getDhcpLeases(routerIp: string, cookie: string): Promise<DhcpLease[]> {
   let res: Response;
   try {
-    res = await fetch(`http://${routerIp}/cgi-bin/sv_getvar.cmd?varName=dhcpLease`, {
+    res = await fetchWithTimeout(`http://${routerIp}/cgi-bin/sv_getvar.cmd?varName=dhcpLease`, {
       headers: {
         Referer: `http://${routerIp}/settings-local-network.asp`,
         'X-Requested-With': 'XMLHttpRequest',
@@ -97,7 +110,7 @@ function parseDhcpLeases(raw: string): DhcpLease[] {
 }
 
 export async function getRebootSessionKey(routerIp: string, cookie: string): Promise<string> {
-  const res = await fetch(`http://${routerIp}/popup-reboot.asp`, {
+  const res = await fetchWithTimeout(`http://${routerIp}/popup-reboot.asp`, {
     headers: {
       Referer: `http://${routerIp}/device-management-resets.asp`,
       Cookie: cookie,
@@ -112,7 +125,7 @@ export async function getRebootSessionKey(routerIp: string, cookie: string): Pro
 }
 
 export async function rebootRouter(routerIp: string, cookie: string, sessionKey: string): Promise<void> {
-  await fetch(`http://${routerIp}/cgi-bin/cbReboot.xml?sessionKey=${sessionKey}`, {
+  await fetchWithTimeout(`http://${routerIp}/cgi-bin/cbReboot.xml?sessionKey=${sessionKey}`, {
     method: 'POST',
     headers: {
       'X-Requested-With': 'XMLHttpRequest',
@@ -133,7 +146,7 @@ function extractVar(html: string, name: string): string {
 }
 
 function fetchPage(routerIp: string, path: string, cookie: string, referer?: string): Promise<Response> {
-  return fetch(`http://${routerIp}${path}`, {
+  return fetchWithTimeout(`http://${routerIp}${path}`, {
     headers: {
       Cookie: cookie,
       Referer: `http://${routerIp}${referer ?? '/index.asp'}`,
@@ -143,7 +156,7 @@ function fetchPage(routerIp: string, path: string, cookie: string, referer?: str
 }
 
 function postPage(routerIp: string, path: string, cookie: string, referer?: string): Promise<Response> {
-  return fetch(`http://${routerIp}${path}`, {
+  return fetchWithTimeout(`http://${routerIp}${path}`, {
     method: 'POST',
     headers: {
       Cookie: cookie,

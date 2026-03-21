@@ -6,9 +6,9 @@ const execAsync = promisify(exec);
 
 const PORT_START = 30000;
 const PORT_END = 50000;
-const MAX_RETRIES = 5;
-const SCAN_CONCURRENCY = 100;
-const SCAN_TIMEOUT_MS = 3000;
+const MAX_RETRIES = 1;
+const SCAN_CONCURRENCY = 500;
+const SCAN_TIMEOUT_MS = 500;
 
 async function adb(args: string): Promise<string> {
   const { stdout } = await execAsync(`adb ${args}`, { timeout: 10000 });
@@ -39,13 +39,14 @@ function checkAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Cancelled');
 }
 
-async function scanPorts(ip: string, signal?: AbortSignal): Promise<number | null> {
+async function scanPorts(ip: string, onBatch?: (start: number, end: number) => void, signal?: AbortSignal): Promise<number | null> {
   const ports = Array.from({ length: PORT_END - PORT_START + 1 }, (_, i) => PORT_START + i);
   const found: number[] = [];
 
   for (let i = 0; i < ports.length; i += SCAN_CONCURRENCY) {
     checkAborted(signal);
     const batch = ports.slice(i, i + SCAN_CONCURRENCY);
+    onBatch?.(batch[0], batch[batch.length - 1]);
     const results = await Promise.all(
       batch.map(async (port) => {
         const open = await checkPort(ip, port, SCAN_TIMEOUT_MS);
@@ -112,7 +113,9 @@ export async function connectAdbWifi(
     if (retry > 0) {
       await new Promise((r) => setTimeout(r, 2000));
     }
-    port = await scanPorts(ip, signal);
+    port = await scanPorts(ip, (start, end) => {
+      onProgress({ phase: 'scanning', retry: retry + 1, detail: `Ports ${start}–${end}` });
+    }, signal);
     if (port !== null) break;
   }
 

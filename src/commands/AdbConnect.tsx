@@ -160,7 +160,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
   const adbPhaseLabel = (dev: AndroidDevice): string => {
     switch (dev.adbPhase) {
       case 'checking-5555': return 'Checking port 5555';
-      case 'scanning': return 'Scanning for debug port';
+      case 'scanning': return dev.detail ? `Scanning ${dev.detail}` : 'Scanning for debug port';
       case 'connecting': return dev.detail ?? 'Connecting';
       case 'switching': return 'Switching to port 5555';
       case 'finalizing': return 'Finalizing connection';

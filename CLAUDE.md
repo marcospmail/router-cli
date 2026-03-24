@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with the router-cli codebase.
-
 ## Project Overview
 
 router-cli is a terminal UI (TUI) CLI tool for managing a Vivo router (Askey RTF8225VW firmware). It uses [Ink](https://github.com/vadimdemedes/ink) (React for CLIs) to render interactive terminal components, BullMQ for job queuing, and a session-based HTTP API to communicate with the router's web interface.
@@ -60,30 +58,17 @@ src/
 
 **Credentials**: Stored via `conf` package. First-run prompts for username/password, then saves them. Use `clear-creds` command to wipe.
 
-## Running the CLI
-
-```bash
-# Globally linked via pnpm
-router-cli reboot
-router-cli devices
-router-cli status
-router-cli wifi
-router-cli logs
-router-cli firewall
-
-# Interactive menu
-router-cli
-```
-
 ## Development Commands
 
 ```bash
-pnpm dev      # Watch mode — rebuilds on save
-pnpm build    # Production build to dist/
-pnpm typecheck  # Type check without building (if configured)
+pnpm dev        # Watch mode — rebuilds on save
+pnpm build      # Production build to dist/
+pnpm typecheck  # Type check without building
 ```
 
-## Available Commands
+## CLI Commands
+
+Globally linked via pnpm. Run `router-cli` with no args for interactive menu.
 
 | Command    | Description                                      |
 |------------|--------------------------------------------------|

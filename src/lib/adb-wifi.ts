@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import net from 'net';
+import { disableWirelessDebugging } from './tasker.js';
 
 const execAsync = promisify(exec);
 
@@ -78,7 +79,11 @@ export type AdbPhase =
   | 'connecting'
   | 'switching'
   | 'finalizing'
+  | 'disconnecting'
+  | 'disabling-debug'
+  | 'cleanup'
   | 'granting-permissions'
+  | 'enabling-debug'
   | 'done'
   | 'error';
 
@@ -92,20 +97,31 @@ export async function connectAdbWifi(
   ip: string,
   onProgress: (progress: AdbProgress) => void,
   signal?: AbortSignal,
+  syncDevice?: string,
 ): Promise<void> {
   // Check if port 5555 is already open
   checkAborted(signal);
-  onProgress({ phase: 'checking-5555' });
+  onProgress({ phase: 'checking-5555', detail: `Checking ${ip}:5555` });
   if (await checkPort(ip, 5555)) {
     checkAborted(signal);
-    onProgress({ phase: 'connecting', detail: 'Port 5555 already open' });
+    onProgress({ phase: 'connecting', detail: 'Port 5555 already open, connecting...' });
     await adb(`connect ${ip}:5555`);
+
+    onProgress({ phase: 'disabling-debug', detail: 'Disabling wireless debugging (ADB)' });
+    try { await adb(`-s ${ip}:5555 shell svc wifi debug disable`); } catch {}
+    try { await adb(`-s ${ip}:5555 shell settings put global adb_wifi_enabled 0`); } catch {}
+    if (syncDevice) {
+      onProgress({ phase: 'disabling-debug', detail: `Disabling wireless debugging via Tasker (${syncDevice})` });
+      try { await disableWirelessDebugging(syncDevice); } catch {}
+    }
+
     await grantTaskerPermissions(ip, onProgress);
     onProgress({ phase: 'done', detail: `Connected to ${ip}:5555` });
     return;
   }
 
   // Scan for wireless debugging port
+  onProgress({ phase: 'scanning', detail: 'Scanning for wireless debugging port...' });
   let port: number | null = null;
   for (let retry = 0; retry < MAX_RETRIES; retry++) {
     checkAborted(signal);
@@ -128,37 +144,45 @@ export async function connectAdbWifi(
   }
 
   checkAborted(signal);
-  onProgress({ phase: 'connecting', detail: `Found port ${port}` });
+  onProgress({ phase: 'connecting', detail: `Found debug port ${port}, connecting to ${ip}:${port}` });
   await adb(`connect ${ip}:${port}`);
 
   await new Promise((r) => setTimeout(r, 2000));
   checkAborted(signal);
 
   // Switch to port 5555
-  onProgress({ phase: 'switching', detail: 'Switching to port 5555' });
+  onProgress({ phase: 'switching', detail: `Switching ${ip}:${port} to tcpip 5555` });
   await adb(`-s ${ip}:${port} tcpip 5555`);
 
   await new Promise((r) => setTimeout(r, 2000));
   checkAborted(signal);
 
   // Connect on 5555
-  onProgress({ phase: 'finalizing' });
+  onProgress({ phase: 'finalizing', detail: `Connecting to ${ip}:5555` });
   await adb(`connect ${ip}:5555`);
 
   // Disconnect from wireless debugging port
+  onProgress({ phase: 'disconnecting', detail: `Disconnecting debug port ${ip}:${port}` });
   try { await adb(`disconnect ${ip}:${port}`); } catch {}
 
   // Disable wireless debugging
+  onProgress({ phase: 'disabling-debug', detail: 'Disabling wireless debugging (ADB shell)' });
   try { await adb(`-s ${ip}:5555 shell svc wifi debug disable`); } catch {}
   try { await adb(`-s ${ip}:5555 shell settings put global adb_wifi_enabled 0`); } catch {}
+  if (syncDevice) {
+    onProgress({ phase: 'disabling-debug', detail: `Disabling wireless debugging via Tasker (${syncDevice})` });
+    try { await disableWirelessDebugging(syncDevice); } catch {}
+  }
 
   // Disconnect any extra connections, keep only 5555
+  onProgress({ phase: 'cleanup', detail: 'Cleaning up extra connections' });
   try {
     const devices = await adb('devices');
     const lines = devices.split('\n').filter((l) => l.includes('\t'));
     for (const line of lines) {
       const dev = line.split('\t')[0];
       if (dev && !dev.includes(`${ip}:5555`)) {
+        onProgress({ phase: 'cleanup', detail: `Disconnecting ${dev}` });
         try { await adb(`disconnect ${dev}`); } catch {}
       }
     }

@@ -17,7 +17,8 @@ router-cli is a terminal UI (TUI) CLI tool for managing a Vivo router (Askey RTF
 
 ```
 src/
-  cli.tsx              Entry point — parses argv[2], renders <App command={command} />
+  cli.tsx              Entry point — parses args/flags, dispatches to TUI or JSON mode
+  json-handlers.ts     JSON output mode handlers for all commands (--json flag)
   components/
     App.tsx            Root component: interactive menu or direct command dispatch
     BackPrompt.tsx     "Press any key to go back" component
@@ -26,6 +27,7 @@ src/
     Status.tsx         Loading/success/error status line component
     Table.tsx          Static table renderer
   commands/
+    AdbConnect.tsx     ADB WiFi connect to Android devices (with Tasker auto-enable)
     ClearCreds.tsx     Clear saved credentials
     Devices.tsx        DHCP device list
     Firewall.tsx       Firewall rules (read-only)
@@ -35,11 +37,13 @@ src/
     WanStatus.tsx      WAN/internet status + device info
     Wifi.tsx           WiFi clients per band
   lib/
+    adb-wifi.ts        ADB WiFi connection logic (port scan, connect, disable debugging)
     credentials.ts     Load/save credentials via conf
     devices.ts         Device-related helpers
     network-scan.ts    Network scanning logic
     router-auth.ts     All router HTTP API calls (login, reboot, DHCP, firewall, logs, WiFi, WAN)
     router-discovery.ts  Discover router IP from default gateway
+    tasker.ts          Tasker integration via sync API (enable/disable wireless debugging)
 ```
 
 ### Key Implementation Details
@@ -54,7 +58,7 @@ src/
 3. GET `/popup-reboot.asp` to extract session key
 4. POST `/cgi-bin/cbReboot.xml?sessionKey=<key>` to trigger reboot
 5. Poll ping until router goes offline (max 5 min)
-6. Poll ping until router comes back online (max 5 min)
+6. Poll ping until router comes back online (max 10 min)
 
 **Credentials**: Stored via `conf` package. First-run prompts for username/password, then saves them. Use `clear-creds` command to wipe.
 
@@ -70,14 +74,19 @@ pnpm typecheck  # Type check without building
 
 Globally linked via pnpm. Run `router-cli` with no args for interactive menu.
 
-| Command    | Description                                      |
-|------------|--------------------------------------------------|
-| `devices`  | List DHCP-connected devices (hostname, IP, MAC)  |
-| `wifi`     | WiFi clients by band (2.4GHz / 5GHz)            |
-| `status`   | WAN IP, GPON status, optical power, ethernet     |
-| `logs`     | System logs with severity                        |
-| `firewall` | Firewall rules (read-only)                       |
-| `reboot`   | Reboot router with live progress display         |
+| Flag                | Description                                      |
+|---------------------|--------------------------------------------------|
+| `-d`, `--devices`   | List DHCP-connected devices (hostname, IP, MAC)  |
+| `-w`, `--wifi`      | WiFi clients by band (2.4GHz / 5GHz)            |
+| `-s`, `--status`    | WAN IP, GPON status, optical power, ethernet     |
+| `-l`, `--logs`      | System logs with severity                        |
+| `-f`, `--firewall`  | Firewall rules (read-only)                       |
+| `-a`, `--adb`       | ADB WiFi connect to Android devices              |
+| `-r`, `--reboot`    | Reboot router with live progress display         |
+| `-h`, `--help`      | Show available commands                          |
+| `scan`              | Network scan (no credentials required)           |
+
+Append `--json` to any flag for structured JSON output (scripting/automation).
 
 ## Router API Notes
 

@@ -21,6 +21,7 @@ const menuItems = [
   { label: '[f] Firewall rules', value: 'firewall', key: 'f' },
   { label: '[a] ADB connect (Android devices)', value: 'adb', key: 'a' },
   { label: '[r] Reboot router', value: 'reboot', key: 'r' },
+  { label: '[h] Help (available commands)', value: 'help', key: 'h' },
   { label: '[q] Quit', value: 'quit', key: 'q' },
 ];
 
@@ -68,18 +69,16 @@ function HelpMessage() {
       <Text bold color="cyan">router-cli</Text>
       <Text dimColor>CLI tool for managing your Vivo router</Text>
       <Text>{''}</Text>
-      <Text bold>Commands:</Text>
-      <Text>  <Text color="green">devices</Text>      List connected devices via router DHCP</Text>
-      <Text>  <Text color="green">wifi</Text>         Show WiFi clients per band</Text>
-      <Text>  <Text color="green">status</Text>       Router status (WAN, device info, GPON)</Text>
-      <Text>  <Text color="green">logs</Text>         View system logs</Text>
-      <Text>  <Text color="green">firewall</Text>     View firewall rules</Text>
-      <Text>  <Text color="green">adb</Text>          ADB WiFi connect to Android devices</Text>
-      <Text>  <Text color="green">reboot</Text>       Reboot the router</Text>
-      <Text>  <Text color="green">help</Text>         Show this help message</Text>
-      <Text>{''}</Text>
       <Text bold>Flags:</Text>
-      <Text>  <Text color="green">--version, -v</Text>  Show version</Text>
+      <Text>  <Text color="green">-d, --devices</Text>    List connected devices via router DHCP</Text>
+      <Text>  <Text color="green">-w, --wifi</Text>       Show WiFi clients per band</Text>
+      <Text>  <Text color="green">-s, --status</Text>     Router status (WAN, device info, GPON)</Text>
+      <Text>  <Text color="green">-l, --logs</Text>       View system logs</Text>
+      <Text>  <Text color="green">-f, --firewall</Text>   View firewall rules</Text>
+      <Text>  <Text color="green">-a, --adb</Text>        ADB WiFi connect to Android devices</Text>
+      <Text>  <Text color="green">-r, --reboot</Text>     Reboot the router</Text>
+      <Text>  <Text color="green">-h, --help</Text>       Show this help message</Text>
+      <Text>  <Text color="green">-v, --version</Text>    Show version</Text>
       <Text>{''}</Text>
       <Text dimColor>Run without arguments for interactive menu.</Text>
     </Box>

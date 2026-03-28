@@ -5,6 +5,8 @@ import { login, getDhcpLeases, getWanStatus, getRouterDeviceInfo, getDhcpConfig,
 import { getCredentials } from './lib/credentials.js';
 import { getDeviceInfo } from './lib/devices.js';
 import { pingSweep, getArpTable } from './lib/network-scan.js';
+import { connectAdbWifi, NO_DEBUG_PORT_ERROR } from './lib/adb-wifi.js';
+import { enableWirelessDebugging, getSyncDeviceName } from './lib/tasker.js';
 
 const execAsync = promisify(exec);
 
@@ -39,48 +41,56 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-async function adbQuick(args: string): Promise<string> {
-  const { stdout } = await execAsync(`adb ${args}`, { timeout: 5000 });
-  return stdout.trim();
-}
-
-async function isDeviceOnline(ip: string): Promise<boolean> {
-  try {
-    const result = await adbQuick('devices');
-    const lines = result.split('\n');
-    return lines.some((l) => l.includes(`${ip}:5555`) && l.includes('\tdevice'));
-  } catch {
-    return false;
-  }
-}
-
 const ANDROID_PATTERNS = ['S25', 'Pixel', 'Tab S9'];
 const PER_DEVICE_TIMEOUT_MS = 30000;
 
-async function connectDeviceJson(ip: string): Promise<{ status: string; detail: string }> {
-  // Try connecting on port 5555
-  await adbQuick(`connect ${ip}:5555`);
+const ENABLE_DEBUG_WAIT_MS = 5000;
 
-  // Check if actually online
-  const online = await isDeviceOnline(ip);
-  if (!online) {
-    return { status: 'offline', detail: `${ip}:5555 connected but device offline` };
+async function connectDeviceJson(ip: string, syncDevice?: string): Promise<{ status: string; detail: string; phases: string[] }> {
+  const phases: string[] = [];
+  const log = (msg: string) => phases.push(msg);
+
+  try {
+    await withTimeout(
+      connectAdbWifi(ip, (p) => log(`${p.phase}: ${p.detail ?? ''}`), undefined, syncDevice),
+      PER_DEVICE_TIMEOUT_MS,
+      `ADB connect ${ip}`,
+    );
+    return { status: 'connected', detail: `Connected to ${ip}:5555`, phases };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === NO_DEBUG_PORT_ERROR && syncDevice) {
+      log('Enabling wireless debugging via Tasker...');
+      await enableWirelessDebugging(syncDevice);
+      log(`Waiting ${ENABLE_DEBUG_WAIT_MS / 1000}s for activation...`);
+      await new Promise((r) => setTimeout(r, ENABLE_DEBUG_WAIT_MS));
+      log('Retrying connection...');
+      try {
+        await withTimeout(
+          connectAdbWifi(ip, (p) => log(`${p.phase}: ${p.detail ?? ''}`), undefined, syncDevice),
+          PER_DEVICE_TIMEOUT_MS,
+          `ADB retry ${ip}`,
+        );
+        return { status: 'connected', detail: `Connected to ${ip}:5555 (after enabling debug)`, phases };
+      } catch (retryErr) {
+        return { status: 'error', detail: retryErr instanceof Error ? retryErr.message : String(retryErr), phases };
+      }
+    }
+    return { status: 'error', detail: msg, phases };
   }
-
-  return { status: 'connected', detail: `Connected to ${ip}:5555` };
 }
 
 async function handleAdb(): Promise<void> {
   const { routerIp, cookie } = await getAuthenticatedSession();
   const leases = await getDhcpLeases(routerIp, cookie);
 
-  const androidDevices: { ip: string; name: string }[] = [];
+  const androidDevices: { ip: string; name: string; syncDevice?: string }[] = [];
   for (const lease of leases) {
     const info = getDeviceInfo(lease.ip);
     if (!info) continue;
     const isAndroid = ANDROID_PATTERNS.some((p) => info.name.includes(p));
     if (isAndroid) {
-      androidDevices.push({ ip: lease.ip, name: info.name });
+      androidDevices.push({ ip: lease.ip, name: info.name, syncDevice: getSyncDeviceName(info.name) });
     }
   }
 
@@ -92,14 +102,10 @@ async function handleAdb(): Promise<void> {
   const results = await Promise.all(
     androidDevices.map(async (dev) => {
       try {
-        const result = await withTimeout(
-          connectDeviceJson(dev.ip),
-          PER_DEVICE_TIMEOUT_MS,
-          `ADB connect ${dev.name}`,
-        );
+        const result = await connectDeviceJson(dev.ip, dev.syncDevice);
         return { ip: dev.ip, name: dev.name, ...result };
       } catch (err) {
-        return { ip: dev.ip, name: dev.name, status: 'error', detail: err instanceof Error ? err.message : String(err) };
+        return { ip: dev.ip, name: dev.name, status: 'error', detail: err instanceof Error ? err.message : String(err), phases: [] };
       }
     }),
   );
@@ -204,12 +210,45 @@ async function handleFirewall(): Promise<void> {
   output({ routerIp, ...data });
 }
 
+const MAX_OFFLINE_WAIT_MS = 5 * 60 * 1000;
+const MAX_ONLINE_WAIT_MS = 10 * 60 * 1000;
+
+async function pingHost(ip: string): Promise<boolean> {
+  try {
+    await execAsync(`ping -c 1 -W 1000 ${ip}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForOffline(ip: string): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < MAX_OFFLINE_WAIT_MS) {
+    if (!(await pingHost(ip))) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('Timed out waiting for router to go offline (5 min)');
+}
+
+async function waitForOnline(ip: string): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < MAX_ONLINE_WAIT_MS) {
+    if (await pingHost(ip)) return;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error('Timed out waiting for router to come back online (10 min)');
+}
+
 async function handleReboot(): Promise<void> {
   const { routerIp, cookie } = await getAuthenticatedSession();
   const sessionKey = await getRebootSessionKey(routerIp, cookie);
   await rebootRouter(routerIp, cookie, sessionKey);
 
-  output({ routerIp, status: 'rebooting' });
+  await waitForOffline(routerIp);
+  await waitForOnline(routerIp);
+
+  output({ routerIp, status: 'rebooted' });
 }
 
 const handlers: Record<string, () => Promise<void>> = {

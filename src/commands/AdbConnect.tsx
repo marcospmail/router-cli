@@ -8,14 +8,18 @@ import { login, getDhcpLeases } from '../lib/router-auth.js';
 import { getCredentials, saveCredentials } from '../lib/credentials.js';
 import { getDeviceInfo } from '../lib/devices.js';
 import { connectAdbWifi, type AdbProgress } from '../lib/adb-wifi.js';
+import { enableWirelessDebugging, getSyncDeviceName } from '../lib/tasker.js';
 
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'connecting' | 'done' | 'error';
 
 const ANDROID_PATTERNS = ['S25', 'Pixel', 'Tab S9'];
+const NO_DEBUG_PORT_MSG = 'No wireless debugging port found';
+const ENABLE_DEBUG_WAIT_MS = 5000;
 
 interface AndroidDevice {
   ip: string;
   name: string;
+  syncDevice?: string;
   status: 'pending' | 'connecting' | 'done' | 'error';
   adbPhase?: string;
   detail?: string;
@@ -37,10 +41,17 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
     };
   }, []);
 
+  const [retryCount, setRetryCount] = useState(0);
+
   useInput((input, key) => {
     if (key.escape || input === 'q') {
       abortRef.current.abort();
       onBack?.();
+      return;
+    }
+    if (phase === 'done' && input === 'r') {
+      abortRef.current = new AbortController();
+      setRetryCount((c) => c + 1);
     }
   });
 
@@ -51,6 +62,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
 
   const runWithCreds = async (username: string, password: string, isNew: boolean) => {
     try {
+      safeSetDevices([]);
       safeSetPhase('discover');
       const ip = await discoverRouter();
       safeSetRouterIp(ip);
@@ -72,6 +84,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
           androidDevices.push({
             ip: lease.ip,
             name: info.name,
+            syncDevice: getSyncDeviceName(info.name),
             status: 'pending',
           });
         }
@@ -93,7 +106,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
             prev.map((d, idx) => (idx === i ? { ...d, status: 'connecting' } : d)),
           );
 
-          return connectAdbWifi(dev.ip, (progress) => {
+          const onProgress = (progress: AdbProgress) => {
             safeSetDevices((prev) =>
               prev.map((d, idx) => {
                 if (idx !== i) return d;
@@ -106,20 +119,56 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
                 return { ...d, ...update };
               }),
             );
-          }, abortRef.current.signal)
+          };
+
+          return connectAdbWifi(dev.ip, onProgress, abortRef.current.signal, dev.syncDevice)
             .then(() => {
               safeSetDevices((prev) =>
                 prev.map((d, idx) => (idx === i ? { ...d, status: 'done' } : d)),
               );
             })
-            .catch((err) => {
-              safeSetDevices((prev) =>
-                prev.map((d, idx) =>
-                  idx === i
-                    ? { ...d, status: 'error', detail: err instanceof Error ? err.message : String(err) }
-                    : d,
-                ),
-              );
+            .catch(async (err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (msg === NO_DEBUG_PORT_MSG && dev.syncDevice) {
+                // Auto-enable wireless debugging and retry
+                safeSetDevices((prev) =>
+                  prev.map((d, idx) =>
+                    idx === i ? { ...d, adbPhase: 'enabling-debug', detail: 'Enabling wireless debugging via Tasker...' } : d,
+                  ),
+                );
+                try {
+                  await enableWirelessDebugging(dev.syncDevice);
+                  safeSetDevices((prev) =>
+                    prev.map((d, idx) =>
+                      idx === i ? { ...d, detail: `Waiting ${ENABLE_DEBUG_WAIT_MS / 1000}s for activation...` } : d,
+                    ),
+                  );
+                  await new Promise((r) => setTimeout(r, ENABLE_DEBUG_WAIT_MS));
+                  safeSetDevices((prev) =>
+                    prev.map((d, idx) =>
+                      idx === i ? { ...d, adbPhase: 'scanning', detail: 'Retrying...' } : d,
+                    ),
+                  );
+                  await connectAdbWifi(dev.ip, onProgress, abortRef.current.signal, dev.syncDevice);
+                  safeSetDevices((prev) =>
+                    prev.map((d, idx) => (idx === i ? { ...d, status: 'done' } : d)),
+                  );
+                } catch (retryErr) {
+                  safeSetDevices((prev) =>
+                    prev.map((d, idx) =>
+                      idx === i
+                        ? { ...d, status: 'error', detail: retryErr instanceof Error ? retryErr.message : String(retryErr) }
+                        : d,
+                    ),
+                  );
+                }
+              } else {
+                safeSetDevices((prev) =>
+                  prev.map((d, idx) =>
+                    idx === i ? { ...d, status: 'error', detail: msg } : d,
+                  ),
+                );
+              }
             });
         }),
       );
@@ -131,16 +180,20 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
     }
   };
 
+  const credsRef = useRef<{ username: string; password: string } | null>(null);
+
   useEffect(() => {
-    const creds = getCredentials();
+    const creds = credsRef.current ?? getCredentials();
     if (creds) {
+      credsRef.current = creds;
       runWithCreds(creds.username, creds.password, false);
     } else {
       setPhase('prompt-creds');
     }
-  }, []);
+  }, [retryCount]);
 
   const handleCredentials = (username: string, password: string) => {
+    credsRef.current = { username, password };
     runWithCreds(username, password, true);
   };
 
@@ -159,12 +212,16 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
 
   const adbPhaseLabel = (dev: AndroidDevice): string => {
     switch (dev.adbPhase) {
-      case 'checking-5555': return 'Checking port 5555';
-      case 'scanning': return dev.detail ? `Scanning ${dev.detail}` : 'Scanning for debug port';
+      case 'checking-5555': return dev.detail ?? 'Checking port 5555';
+      case 'scanning': return dev.detail ?? 'Scanning for debug port';
       case 'connecting': return dev.detail ?? 'Connecting';
-      case 'switching': return 'Switching to port 5555';
-      case 'finalizing': return 'Finalizing connection';
-      case 'granting-permissions': return 'Granting permissions';
+      case 'switching': return dev.detail ?? 'Switching to port 5555';
+      case 'finalizing': return dev.detail ?? 'Finalizing connection';
+      case 'disconnecting': return dev.detail ?? 'Disconnecting debug port';
+      case 'disabling-debug': return dev.detail ?? 'Disabling wireless debugging';
+      case 'cleanup': return dev.detail ?? 'Cleaning up connections';
+      case 'enabling-debug': return dev.detail ?? 'Enabling wireless debugging...';
+      case 'granting-permissions': return dev.detail ?? 'Granting permissions';
       case 'done': return dev.detail ?? 'Connected';
       case 'error': return dev.detail ?? 'Failed';
       default: return 'Waiting';
@@ -200,7 +257,13 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
         </Box>
       )}
 
-      {phase === 'done' && <BackPrompt onBack={onBack} />}
+      {phase === 'done' && (
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>Press <Text bold color="yellow">r</Text> to retry all</Text>
+          <Text>{''}</Text>
+          <Text dimColor>Press <Text bold color="yellow">esc</Text> to go back</Text>
+        </Box>
+      )}
     </Box>
   );
 }

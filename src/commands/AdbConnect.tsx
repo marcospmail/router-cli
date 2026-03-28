@@ -7,13 +7,12 @@ import { discoverRouter } from '../lib/router-discovery.js';
 import { login, getDhcpLeases } from '../lib/router-auth.js';
 import { getCredentials, saveCredentials } from '../lib/credentials.js';
 import { getDeviceInfo } from '../lib/devices.js';
-import { connectAdbWifi, type AdbProgress } from '../lib/adb-wifi.js';
+import { connectAdbWifi, NO_DEBUG_PORT_ERROR, type AdbProgress } from '../lib/adb-wifi.js';
 import { enableWirelessDebugging, getSyncDeviceName } from '../lib/tasker.js';
 
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'connecting' | 'done' | 'error';
 
 const ANDROID_PATTERNS = ['S25', 'Pixel', 'Tab S9'];
-const NO_DEBUG_PORT_MSG = 'No wireless debugging port found';
 const ENABLE_DEBUG_WAIT_MS = 5000;
 
 interface AndroidDevice {
@@ -129,7 +128,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
             })
             .catch(async (err) => {
               const msg = err instanceof Error ? err.message : String(err);
-              if (msg === NO_DEBUG_PORT_MSG && dev.syncDevice) {
+              if (msg === NO_DEBUG_PORT_ERROR && dev.syncDevice) {
                 // Auto-enable wireless debugging and retry
                 safeSetDevices((prev) =>
                   prev.map((d, idx) =>

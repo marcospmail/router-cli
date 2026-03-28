@@ -87,6 +87,8 @@ export type AdbPhase =
   | 'done'
   | 'error';
 
+export const NO_DEBUG_PORT_ERROR = 'No wireless debugging port found';
+
 export interface AdbProgress {
   phase: AdbPhase;
   detail?: string;
@@ -112,7 +114,11 @@ export async function connectAdbWifi(
     try { await adb(`-s ${ip}:5555 shell settings put global adb_wifi_enabled 0`); } catch {}
     if (syncDevice) {
       onProgress({ phase: 'disabling-debug', detail: `Disabling wireless debugging via Tasker (${syncDevice})` });
-      try { await disableWirelessDebugging(syncDevice); } catch {}
+      try {
+        await disableWirelessDebugging(syncDevice);
+      } catch (err) {
+        onProgress({ phase: 'disabling-debug', detail: `Tasker disable failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
     }
 
     await grantTaskerPermissions(ip, onProgress);
@@ -140,7 +146,7 @@ export async function connectAdbWifi(
       phase: 'error',
       detail: 'No wireless debugging port found. Make sure Wireless Debugging is enabled.',
     });
-    throw new Error('No wireless debugging port found');
+    throw new Error(NO_DEBUG_PORT_ERROR);
   }
 
   checkAborted(signal);
@@ -171,7 +177,11 @@ export async function connectAdbWifi(
   try { await adb(`-s ${ip}:5555 shell settings put global adb_wifi_enabled 0`); } catch {}
   if (syncDevice) {
     onProgress({ phase: 'disabling-debug', detail: `Disabling wireless debugging via Tasker (${syncDevice})` });
-    try { await disableWirelessDebugging(syncDevice); } catch {}
+    try {
+      await disableWirelessDebugging(syncDevice);
+    } catch (err) {
+      onProgress({ phase: 'disabling-debug', detail: `Tasker disable failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
   }
 
   // Disconnect any extra connections, keep only 5555

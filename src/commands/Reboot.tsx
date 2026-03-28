@@ -138,11 +138,12 @@ function isAfter(current: Phase, target: Phase): boolean {
   return PHASE_ORDER.indexOf(current) > PHASE_ORDER.indexOf(target);
 }
 
-const MAX_WAIT_MS = 5 * 60 * 1000;
+const MAX_OFFLINE_WAIT_MS = 5 * 60 * 1000;
+const MAX_ONLINE_WAIT_MS = 10 * 60 * 1000;
 
 async function waitForOffline(ip: string, onElapsed: (s: number) => void): Promise<void> {
   const start = Date.now();
-  while (Date.now() - start < MAX_WAIT_MS) {
+  while (Date.now() - start < MAX_OFFLINE_WAIT_MS) {
     onElapsed(Math.round((Date.now() - start) / 1000));
     try {
       await execAsync(`ping -c 1 -W 1000 ${ip}`);
@@ -156,7 +157,7 @@ async function waitForOffline(ip: string, onElapsed: (s: number) => void): Promi
 
 async function waitForOnline(ip: string, onElapsed: (s: number) => void): Promise<void> {
   const start = Date.now();
-  while (Date.now() - start < MAX_WAIT_MS) {
+  while (Date.now() - start < MAX_ONLINE_WAIT_MS) {
     onElapsed(Math.round((Date.now() - start) / 1000));
     try {
       await execAsync(`ping -c 1 -W 1000 ${ip}`);
@@ -165,7 +166,7 @@ async function waitForOnline(ip: string, onElapsed: (s: number) => void): Promis
       await sleep(2000);
     }
   }
-  throw new Error('Timed out waiting for router to come back online (5 min)');
+  throw new Error('Timed out waiting for router to come back online (10 min)');
 }
 
 function sleep(ms: number): Promise<void> {

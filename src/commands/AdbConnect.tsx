@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Text, Box, useInput } from 'ink';
+import { Text, Box, useInput, useApp } from 'ink';
 import { Status } from '../components/Status.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
 import { BackPrompt } from '../components/BackPrompt.js';
@@ -26,6 +26,7 @@ interface AndroidDevice {
 }
 
 export function AdbConnect({ onBack }: { onBack?: () => void }) {
+  const { exit } = useApp();
   const [phase, setPhase] = useState<Phase>('check-creds');
   const [routerIp, setRouterIp] = useState('');
   const [devices, setDevices] = useState<AndroidDevice[]>([]);
@@ -45,7 +46,8 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
   useInput((input, key) => {
     if (key.escape || input === 'q') {
       abortRef.current.abort();
-      onBack?.();
+      if (onBack) onBack();
+      else exit();
       return;
     }
     if (phase === 'done' && input === 'r') {
@@ -260,7 +262,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
         <Box marginTop={1} flexDirection="column">
           <Text dimColor>Press <Text bold color="yellow">r</Text> to retry all</Text>
           <Text>{''}</Text>
-          <Text dimColor>Press <Text bold color="yellow">esc</Text> to go back</Text>
+          <Text dimColor>Press <Text bold color="yellow">esc</Text> to {onBack ? 'go back' : 'exit'}</Text>
         </Box>
       )}
     </Box>

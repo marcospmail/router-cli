@@ -82,7 +82,6 @@ async function scanPorts(ip: string, onBatch?: (start: number, end: number) => v
     for (const port of results) {
       if (port !== null) found.push(port);
     }
-    if (found.length > 0) break;
   }
 
   return found;

@@ -9,8 +9,8 @@ router-cli is a terminal UI (TUI) CLI tool for managing a Vivo router (Askey RTF
 ### Stack
 
 - **UI**: Ink (React-based TUI) with ink-select-input, ink-spinner, ink-text-input
-- **Build**: tsup (bundles `src/` → `dist/`)
-- **Language**: TypeScript (ESM, Node.js)
+- **Build**: Bun (bundles `src/` → `dist/` via `build.ts`)
+- **Language**: TypeScript (ESM, Bun runtime)
 - **Credential storage**: `conf` package (system app data directory)
 
 ### Directory Structure
@@ -65,14 +65,14 @@ src/
 ## Development Commands
 
 ```bash
-pnpm dev        # Watch mode — rebuilds on save
-pnpm build      # Production build to dist/
-pnpm typecheck  # Type check without building
+bun run dev     # Watch mode — rebuilds on save
+bun run build   # Production build to dist/
+bun run typecheck  # Type check without building
 ```
 
 ## CLI Commands
 
-Globally linked via pnpm. Run `router-cli` with no args for interactive menu.
+Globally linked via `bun link`. Run `router-cli` with no args for interactive menu.
 
 | Flag                | Description                                      |
 |---------------------|--------------------------------------------------|
@@ -101,4 +101,4 @@ Append `--json` to any flag for structured JSON output (scripting/automation).
 1. Create `src/commands/NewCommand.tsx` — export a React component
 2. Add to `App.tsx` menu items array and `CommandView` switch
 3. Add router API calls to `src/lib/router-auth.ts` if needed
-4. Rebuild: `pnpm build`
+4. Rebuild: `bun run build`

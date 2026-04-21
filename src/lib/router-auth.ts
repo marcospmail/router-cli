@@ -1,16 +1,90 @@
 import type { Credentials } from './credentials.js';
 
 const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_SECONDS = Math.ceil(FETCH_TIMEOUT_MS / 1000);
+const CURL_EXIT_TIMEOUT = 28;
+const HEADER_SEPARATOR = '\r\n\r\n';
 
+// Built-in fetch cannot reach LAN RFC1918 addresses when the process is spawned
+// by a daemon (e.g. pm2) that started before the network came up on macOS —
+// it returns EHOSTUNREACH even though the route is valid. curl uses scope-aware
+// socket creation and works regardless, so we shell out to it.
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'TimeoutError') {
-      throw new Error(`Router unreachable (timed out connecting to ${new URL(url).host})`);
-    }
-    throw err;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const args: string[] = [
+    '--silent',
+    '--show-error',
+    '--include',
+    '--location',
+    '--max-time', String(FETCH_TIMEOUT_SECONDS),
+    '--connect-timeout', String(FETCH_TIMEOUT_SECONDS),
+    '--request', method,
+  ];
+
+  if (init?.headers) {
+    const headers = new Headers(init.headers);
+    headers.forEach((value, key) => {
+      args.push('--header', `${key}: ${value}`);
+    });
   }
+
+  if (init?.body !== undefined && init?.body !== null) {
+    if (typeof init.body !== 'string') {
+      throw new Error('fetchWithTimeout only supports string bodies');
+    }
+    args.push('--data-binary', init.body);
+  }
+
+  args.push(url);
+
+  const proc = Bun.spawn(['curl', ...args], { stdout: 'pipe', stderr: 'pipe' });
+  const [stdoutBuf, stderrText, exitCode] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  if (exitCode === CURL_EXIT_TIMEOUT) {
+    throw new Error(`Router unreachable (timed out connecting to ${new URL(url).host})`);
+  }
+  if (exitCode !== 0) {
+    throw new Error(`curl failed (exit ${exitCode}): ${stderrText.trim()}`);
+  }
+
+  return parseCurlResponse(new Uint8Array(stdoutBuf));
+}
+
+function parseCurlResponse(buf: Uint8Array): Response {
+  const text = new TextDecoder('latin1').decode(buf);
+  let searchFrom = 0;
+  let lastHeaderStart = 0;
+  let lastSeparator = text.indexOf(HEADER_SEPARATOR);
+  while (lastSeparator !== -1) {
+    searchFrom = lastSeparator + HEADER_SEPARATOR.length;
+    const nextBlockStart = text.indexOf('HTTP/', searchFrom);
+    if (nextBlockStart === -1 || nextBlockStart !== searchFrom) break;
+    lastHeaderStart = nextBlockStart;
+    lastSeparator = text.indexOf(HEADER_SEPARATOR, nextBlockStart);
+  }
+  if (lastSeparator === -1) {
+    return new Response(buf, { status: 0 });
+  }
+  const headerText = text.slice(lastHeaderStart, lastSeparator);
+  const bodyBytes = buf.slice(lastSeparator + HEADER_SEPARATOR.length);
+
+  const [statusLine, ...headerLines] = headerText.split('\r\n');
+  const statusMatch = statusLine.match(/^HTTP\/\S+\s+(\d+)/);
+  const status = statusMatch ? Number(statusMatch[1]) : 0;
+
+  const headers = new Headers();
+  for (const line of headerLines) {
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const key = line.slice(0, colon).trim();
+    const value = line.slice(colon + 1).trim();
+    headers.append(key, value);
+  }
+  return new Response(bodyBytes, { status, headers });
 }
 
 function xorEncode(str: string): string {

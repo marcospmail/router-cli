@@ -17,13 +17,24 @@ async function adb(args: string): Promise<string> {
 }
 
 async function adbConnect(target: string): Promise<boolean> {
-  const output = await adb(`connect ${target}`);
+  let output: string;
+  try {
+    output = await adb(`connect ${target}`);
+  } catch {
+    // adb connect can throw on timeout or non-zero exit when hitting a
+    // non-ADB port (e.g., other Samsung services). Treat as failed connect.
+    return false;
+  }
   if (output.includes('connected to')) {
     // Verify device is actually online (not "offline" state)
     await new Promise((r) => setTimeout(r, 1000));
-    const devices = await adb('devices');
-    const line = devices.split('\n').find((l) => l.startsWith(target));
-    return !!line && line.includes('\tdevice');
+    try {
+      const devices = await adb('devices');
+      const line = devices.split('\n').find((l) => l.startsWith(target));
+      return !!line && line.includes('\tdevice');
+    } catch {
+      return false;
+    }
   }
   return false;
 }

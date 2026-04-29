@@ -7,7 +7,7 @@ import { discoverRouter } from '../lib/router-discovery.js';
 import { login, getDhcpLeases } from '../lib/router-auth.js';
 import { getCredentials, saveCredentials } from '../lib/credentials.js';
 import { getDeviceInfo } from '../lib/devices.js';
-import { connectAdbWifi, NO_DEBUG_PORT_ERROR, type AdbProgress } from '../lib/adb-wifi.js';
+import { connectAdbWifi, resetAdbServer, NO_DEBUG_PORT_ERROR, type AdbProgress } from '../lib/adb-wifi.js';
 import { enableWirelessDebugging, getSyncDeviceName } from '../lib/tasker.js';
 
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'connecting' | 'done' | 'error';
@@ -99,6 +99,10 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
 
       safeSetDevices(androidDevices);
       safeSetPhase('connecting');
+
+      // Reset adb server once before parallel fan-out to clear any cached
+      // connection-failure state from previous sessions
+      await resetAdbServer();
 
       // Connect to all devices in parallel
       await Promise.all(

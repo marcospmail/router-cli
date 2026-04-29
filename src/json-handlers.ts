@@ -5,7 +5,7 @@ import { login, getDhcpLeases, getWanStatus, getRouterDeviceInfo, getDhcpConfig,
 import { getCredentials } from './lib/credentials.js';
 import { getDeviceInfo } from './lib/devices.js';
 import { pingSweep, getArpTable } from './lib/network-scan.js';
-import { connectAdbWifi, NO_DEBUG_PORT_ERROR } from './lib/adb-wifi.js';
+import { connectAdbWifi, resetAdbServer, NO_DEBUG_PORT_ERROR } from './lib/adb-wifi.js';
 import { enableWirelessDebugging, getSyncDeviceName } from './lib/tasker.js';
 
 const execAsync = promisify(exec);
@@ -98,6 +98,8 @@ async function handleAdb(): Promise<void> {
     outputError('No Android devices found on the network');
     return;
   }
+
+  await resetAdbServer();
 
   const results = await Promise.all(
     androidDevices.map(async (dev) => {

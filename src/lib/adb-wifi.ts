@@ -130,6 +130,16 @@ export interface AdbProgress {
   retry?: number;
 }
 
+export async function resetAdbServer(): Promise<void> {
+  // The adb daemon caches transient connection failures (e.g., "No route to
+  // host") for ports it has previously failed on. When wireless debugging is
+  // re-toggled on Android, the port number changes — but if any cached state
+  // matches, adb refuses to connect even though the port is reachable.
+  // Killing the server clears this cache. mDNS-discovered devices reconnect
+  // automatically; USB devices reconnect on next command.
+  try { await adb('kill-server'); } catch {}
+}
+
 export async function connectAdbWifi(
   ip: string,
   onProgress: (progress: AdbProgress) => void,

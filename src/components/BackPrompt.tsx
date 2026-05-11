@@ -7,8 +7,8 @@ interface BackPromptProps {
 
 export function BackPrompt({ onBack }: BackPromptProps) {
   useInput(() => {
-    onBack?.();
-  });
+    if (onBack) onBack();
+  }, { isActive: onBack !== undefined });
 
   if (!onBack) return null;
 

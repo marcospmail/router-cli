@@ -121,7 +121,6 @@ export function Firewall({ onBack }: { onBack?: () => void }) {
       ) : (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>No user-defined firewall rules.</Text>
-          <Text dimColor>{rows.length} user-defined rules</Text>
           <BackPrompt onBack={onBack} />
         </Box>
       )}

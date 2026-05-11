@@ -8,6 +8,7 @@ import { WanStatus } from '../commands/WanStatus.js';
 import { Wifi } from '../commands/Wifi.js';
 import { Reboot } from '../commands/Reboot.js';
 import { AdbConnect } from '../commands/AdbConnect.js';
+import { Scan } from '../commands/Scan.js';
 
 interface AppProps {
   command: string;
@@ -101,6 +102,8 @@ function CommandView({ command, onBack }: { command: string; onBack?: () => void
       return <AdbConnect onBack={onBack} />;
     case 'reboot':
       return <Reboot onBack={onBack} />;
+    case 'scan':
+      return <Scan onBack={onBack} />;
     default:
       return <HelpMessage />;
   }

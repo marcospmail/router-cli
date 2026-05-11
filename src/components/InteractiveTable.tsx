@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Text, Box, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { Table, type Column } from './Table.js';
 import { execSync, spawn, type ChildProcess } from 'child_process';
 
-interface InteractiveTableProps<T extends Record<string, unknown>> {
+interface InteractiveTableProps<T extends object> {
   data: T[];
   columns: Column<T>[];
   ipKey?: keyof T;
@@ -15,7 +15,7 @@ type Mode = 'navigate' | 'filter' | 'ping' | 'detail';
 
 const PAGE_SIZE = 10;
 
-export function InteractiveTable<T extends Record<string, unknown>>({
+export function InteractiveTable<T extends object>({
   data,
   columns,
   ipKey,
@@ -38,9 +38,14 @@ export function InteractiveTable<T extends Record<string, unknown>>({
   }, [data, columns, filterText]);
 
   const clampedRow = Math.min(selectedRow, Math.max(filteredData.length - 1, 0));
-  if (clampedRow !== selectedRow && filteredData.length > 0) {
-    setSelectedRow(clampedRow);
-  }
+
+  // Sync selectedRow into bounds when the filtered list shrinks (e.g. filter text changes).
+  // Must be a useEffect — never call setState during render.
+  useEffect(() => {
+    if (filteredData.length > 0 && selectedRow > filteredData.length - 1) {
+      setSelectedRow(filteredData.length - 1);
+    }
+  }, [filteredData.length, selectedRow]);
 
   const selectedItem = filteredData[clampedRow];
 
@@ -95,7 +100,7 @@ export function InteractiveTable<T extends Record<string, unknown>>({
     if (mode === 'ping') {
       if (input === 'c' && pingOutput) {
         try {
-          execSync(`echo -n ${JSON.stringify(pingOutput)} | pbcopy`);
+          execSync('pbcopy', { input: pingOutput });
         } catch {}
         lastKeyRef.current = '';
         return;
@@ -118,7 +123,7 @@ export function InteractiveTable<T extends Record<string, unknown>>({
       if (input === 'c' && selectedItem) {
         const text = columns.map((col) => `${col.label}: ${String(selectedItem[col.key] ?? '')}`).join('\n');
         try {
-          execSync(`echo -n ${JSON.stringify(text)} | pbcopy`);
+          execSync('pbcopy', { input: text });
         } catch {}
         lastKeyRef.current = '';
         return;
@@ -200,7 +205,7 @@ export function InteractiveTable<T extends Record<string, unknown>>({
       const ip = String(selectedItem[ipKey] ?? '');
       if (ip) {
         try {
-          execSync(`echo -n "${ip}" | pbcopy`);
+          execSync('pbcopy', { input: ip });
         } catch {}
       }
       lastKeyRef.current = '';

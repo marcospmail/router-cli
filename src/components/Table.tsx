@@ -10,7 +10,7 @@ export interface Column<T> {
   align?: 'left' | 'right';
 }
 
-interface TableProps<T extends Record<string, unknown>> {
+interface TableProps<T extends object> {
   data: T[];
   columns: Column<T>[];
   highlightRow?: number;
@@ -21,7 +21,7 @@ function pad(str: string, width: number, align: 'left' | 'right' = 'left'): stri
   return align === 'right' ? truncated.padStart(width) : truncated.padEnd(width);
 }
 
-export function Table<T extends Record<string, unknown>>({ data, columns, highlightRow }: TableProps<T>) {
+export function Table<T extends object>({ data, columns, highlightRow }: TableProps<T>) {
   const colWidths = columns.map((col) => {
     const headerLen = col.label.length;
     const maxDataLen = data.reduce((max, row) => {

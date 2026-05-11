@@ -3,25 +3,34 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// macOS: ping -W is in milliseconds. Linux: ping -W is in seconds.
+const PING_WAIT_1S = process.platform === 'darwin' ? '1000' : '1';
+
 export interface ScannedDevice {
   ip: string;
   mac: string;
   status: 'online';
 }
 
+const PING_CONCURRENCY = 50;
+const HOST_TOTAL = 254;
+
 export async function pingSweep(subnet: string, onProgress?: (current: number, total: number) => void): Promise<void> {
-  const promises: Promise<void>[] = [];
-  const total = 254;
+  const ips = Array.from({ length: HOST_TOTAL }, (_, i) => `${subnet}.${i + 1}`);
+  let completed = 0;
 
-  for (let i = 1; i <= 254; i++) {
-    const ip = `${subnet}.${i}`;
-    const p = execAsync(`ping -c 1 -W 1 ${ip}`)
-      .then(() => onProgress?.(i, total))
-      .catch(() => onProgress?.(i, total));
-    promises.push(p);
+  for (let i = 0; i < ips.length; i += PING_CONCURRENCY) {
+    const batch = ips.slice(i, i + PING_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (ip) => {
+        try {
+          await execAsync(`ping -c 1 -W ${PING_WAIT_1S} ${ip}`);
+        } catch {}
+        completed++;
+        if (onProgress) onProgress(completed, HOST_TOTAL);
+      })
+    );
   }
-
-  await Promise.all(promises);
 }
 
 export async function getArpTable(): Promise<ScannedDevice[]> {

@@ -10,7 +10,9 @@ const HEADER_SEPARATOR = '\r\n\r\n';
 // it returns EHOSTUNREACH even though the route is valid. curl uses scope-aware
 // socket creation and works regardless, so we shell out to it.
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  const method = (init?.method ?? 'GET').toUpperCase();
+  let method = 'GET';
+  if (init !== undefined && init.method !== undefined) method = init.method;
+  method = method.toUpperCase();
   const args: string[] = [
     '--silent',
     '--show-error',
@@ -67,7 +69,7 @@ function parseCurlResponse(buf: Uint8Array): Response {
     lastSeparator = text.indexOf(HEADER_SEPARATOR, nextBlockStart);
   }
   if (lastSeparator === -1) {
-    return new Response(buf, { status: 0 });
+    return new Response(Buffer.from(buf), { status: 0 });
   }
   const headerText = text.slice(lastHeaderStart, lastSeparator);
   const bodyBytes = buf.slice(lastSeparator + HEADER_SEPARATOR.length);
@@ -84,9 +86,12 @@ function parseCurlResponse(buf: Uint8Array): Response {
     const value = line.slice(colon + 1).trim();
     headers.append(key, value);
   }
-  return new Response(bodyBytes, { status, headers });
+  return new Response(Buffer.from(bodyBytes), { status, headers });
 }
 
+// NOTE: XOR-0x1f is obfuscation imposed by the router firmware — NOT encryption.
+// Credentials are transmitted in plain HTTP (no TLS). Run this tool only on a
+// trusted LAN; never expose the router's management interface to untrusted networks.
 function xorEncode(str: string): string {
   return Array.from(str)
     .map((c) => String.fromCharCode(c.charCodeAt(0) ^ 0x1f))
@@ -164,21 +169,27 @@ export interface DhcpLease {
   flag: string;
 }
 
+// Format: iid/hostname/mac/ip/leaseSeconds/skip/group/flag (8 slash-separated fields per pipe-delimited entry).
+// Hostnames that contain '/' would shift subsequent fields — we validate field count to catch this early.
+const DHCP_ENTRY_FIELDS = 8;
+
 function parseDhcpLeases(raw: string): DhcpLease[] {
   return raw
     .split('|')
     .filter((entry) => entry.trim().length > 0)
-    .map((entry) => {
-      const [iid, hostname, mac, ip, leaseSeconds, , group, flag] = entry.split('/');
-      return {
-        iid,
-        hostname,
-        mac,
-        ip,
-        leaseSeconds: parseInt(leaseSeconds, 10),
-        group,
-        flag,
-      };
+    .flatMap((entry) => {
+      const fields = entry.split('/');
+      if (fields.length < DHCP_ENTRY_FIELDS) {
+        process.stderr.write(`[parseDhcpLeases] unexpected entry shape (${fields.length} fields): ${entry}\n`);
+        return [];
+      }
+      const [iid, hostname, mac, ip, leaseSecondsRaw, , group, flag] = fields;
+      const leaseSeconds = parseInt(leaseSecondsRaw, 10);
+      if (isNaN(leaseSeconds)) {
+        process.stderr.write(`[parseDhcpLeases] invalid leaseSeconds in entry: ${entry}\n`);
+        return [];
+      }
+      return [{ iid, hostname, mac, ip, leaseSeconds, group, flag }];
     })
     .filter((lease) => lease.leaseSeconds > 0);
 }
@@ -198,6 +209,9 @@ export async function getRebootSessionKey(routerIp: string, cookie: string): Pro
   return match[1];
 }
 
+// NOTE: The firmware requires sessionKey as a URL query parameter. This exposes
+// the token in server access logs and Referer headers on redirects. No client-side
+// fix is possible — document as a known firmware limitation (Askey RTF8225VW).
 export async function rebootRouter(routerIp: string, cookie: string, sessionKey: string): Promise<void> {
   await fetchWithTimeout(`http://${routerIp}/cgi-bin/cbReboot.xml?sessionKey=${sessionKey}`, {
     method: 'POST',
@@ -220,21 +234,25 @@ function extractVar(html: string, name: string): string {
 }
 
 function fetchPage(routerIp: string, path: string, cookie: string, referer?: string): Promise<Response> {
+  let actualReferer = '/index.asp';
+  if (referer !== undefined) actualReferer = referer;
   return fetchWithTimeout(`http://${routerIp}${path}`, {
     headers: {
       Cookie: cookie,
-      Referer: `http://${routerIp}${referer ?? '/index.asp'}`,
+      Referer: `http://${routerIp}${actualReferer}`,
       'X-Requested-With': 'XMLHttpRequest',
     },
   });
 }
 
 function postPage(routerIp: string, path: string, cookie: string, referer?: string): Promise<Response> {
+  let actualReferer = '/index.asp';
+  if (referer !== undefined) actualReferer = referer;
   return fetchWithTimeout(`http://${routerIp}${path}`, {
     method: 'POST',
     headers: {
       Cookie: cookie,
-      Referer: `http://${routerIp}${referer ?? '/index.asp'}`,
+      Referer: `http://${routerIp}${actualReferer}`,
       'X-Requested-With': 'XMLHttpRequest',
     },
     body: '',
@@ -269,6 +287,8 @@ export async function getSystemLogs(
   const sessionKey = pageHtml.match(/sessionKey='(\d+)'/)?.[1];
   if (!sessionKey) throw new Error('Failed to get system logs session key');
 
+  // NOTE: sessionKey appears in the URL query string — exposed in access logs and
+  // Referer headers. Firmware limitation; no client-side mitigation available.
   const url =
     `/cgi-bin/sv_setvar.cmd?sessionKey=${sessionKey}` +
     `&varName=sysLog&varValue=1&facility=${facility}&severity=${severity}`;
@@ -287,11 +307,17 @@ function parseSystemLogs(raw: string): LogEntry[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw)) !== null) {
     const [levelFull, severityName] = m[3].split('.');
+    let severity: string;
+    if (severityName !== undefined) {
+      severity = severityName;
+    } else {
+      severity = m[3];
+    }
     entries.push({
       date: m[1],
       domain: m[2],
       level: levelFull,
-      severity: severityName ?? m[3],
+      severity,
       module: m[4],
       message: m[5],
     });
@@ -338,7 +364,7 @@ export async function getFirewallData(routerIp: string, cookie: string): Promise
   const ruleIndexList = extractVar(html, 'firewallRuleIndexList');
   const intfList = extractVar(html, 'firewallInterfaceList');
 
-  const [wanIntf, lanIntf] = intfList.split(',');
+  const [wanIntf] = intfList.split(',');
 
   if (!ruleIndexList) {
     return { defaultPolicy, echoEnabled, rules: [] };
@@ -378,7 +404,13 @@ export async function getFirewallData(routerIp: string, cookie: string): Promise
       actionStr = actionCode === '1' ? 'acptLocal' : 'rjctLocal';
     }
 
-    const protocol = PROTOCOL_MAP[f[20]] ?? f[20];
+    const mappedProtocol = PROTOCOL_MAP[f[20]];
+    let protocol: string;
+    if (mappedProtocol !== undefined) {
+      protocol = mappedProtocol;
+    } else {
+      protocol = f[20];
+    }
     const isLocal = actionStr === 'acptLocal' || actionStr === 'rjctLocal';
 
     const dstAddr = f[14] === '*' ? '*' : f[14] + (f[15] !== '-1' ? `/${f[15]}` : '');
@@ -501,14 +533,19 @@ export async function getDhcpConfig(routerIp: string, cookie: string): Promise<D
   const leaseMatch = html.match(/var\s+leaseTime\s*=\s*parseInt\((\d+)\/(\d+)\)/);
   const leaseMinutes = leaseMatch ? Math.floor(parseInt(leaseMatch[1], 10) / parseInt(leaseMatch[2], 10)) : 0;
 
+  let primaryDns = '';
+  if (dnsServers.length >= 1) primaryDns = dnsServers[0];
+  let secondaryDns = '';
+  if (dnsServers.length >= 2) secondaryDns = dnsServers[1];
+
   return {
     enabled: extractVar(html, 'dhcpEnbl') === '1',
     routerIp: extractVar(html, 'lanIp'),
     netMask: extractVar(html, 'lanMask'),
     rangeStart: extractVar(html, 'dhcpStart'),
     rangeEnd: extractVar(html, 'dhcpEnd'),
-    primaryDns: dnsServers[0] ?? '',
-    secondaryDns: dnsServers[1] ?? '',
+    primaryDns,
+    secondaryDns,
     leaseTimeMinutes: leaseMinutes,
   };
 }
@@ -538,15 +575,22 @@ export async function getRouterDeviceInfo(routerIp: string, cookie: string): Pro
     if (cleanLabel && cleanValue) data[cleanLabel] = cleanValue;
   }
 
-  return {
-    vendor: data['Vendor'] ?? '',
-    model: data['Model'] ?? '',
-    softwareVersion: data['Software Version'] ?? '',
-    hardwareVersion: data['Hardware Version'] ?? '',
-    serialNumber: data['Serial Number'] ?? '',
-    wanMac: data['WAN MAC Address'] ?? '',
-    lanMac: data['LAN MAC Address'] ?? '',
-  };
+  let vendor = '';
+  if (data['Vendor'] !== undefined) vendor = data['Vendor'];
+  let model = '';
+  if (data['Model'] !== undefined) model = data['Model'];
+  let softwareVersion = '';
+  if (data['Software Version'] !== undefined) softwareVersion = data['Software Version'];
+  let hardwareVersion = '';
+  if (data['Hardware Version'] !== undefined) hardwareVersion = data['Hardware Version'];
+  let serialNumber = '';
+  if (data['Serial Number'] !== undefined) serialNumber = data['Serial Number'];
+  let wanMac = '';
+  if (data['WAN MAC Address'] !== undefined) wanMac = data['WAN MAC Address'];
+  let lanMac = '';
+  if (data['LAN MAC Address'] !== undefined) lanMac = data['LAN MAC Address'];
+
+  return { vendor, model, softwareVersion, hardwareVersion, serialNumber, wanMac, lanMac };
 }
 
 // ── WiFi Clients ──
@@ -587,12 +631,18 @@ export async function getWifiClients(routerIp: string, cookie: string): Promise<
       const [mac, timeStr] = entry.split(',');
       if (!mac) continue;
       const host = hostMap.get(mac.toLowerCase());
+      let hostname = '—';
+      let ip = '—';
+      if (host !== undefined) {
+        hostname = host.hostname;
+        ip = host.ip;
+      }
       clients.push({
         mac: mac.toUpperCase(),
         band,
         connectedTime: formatConnectedTime(timeStr),
-        hostname: host?.hostname ?? '—',
-        ip: host?.ip ?? '—',
+        hostname,
+        ip,
       });
     }
   };

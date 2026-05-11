@@ -10,16 +10,21 @@ const PORT_END = 50000;
 const MAX_RETRIES = 1;
 const SCAN_CONCURRENCY = 200;
 const SCAN_TIMEOUT_MS = 500;
+const ADB_CMD_TIMEOUT_MS = 10_000;
+const ADB_CONNECT_VERIFY_DELAY_MS = 1000;
+const ADB_PORT_CHECK_TIMEOUT_MS = 1000;
+const ADB_SCAN_RETRY_DELAY_MS = 2000;
+const ADB_SWITCH_SETTLE_MS = 2000;
 
-async function adb(args: string): Promise<string> {
-  const { stdout } = await execFileAsync('adb', args.split(' '), { timeout: 10000 });
+async function adb(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('adb', args, { timeout: ADB_CMD_TIMEOUT_MS });
   return stdout.trim();
 }
 
 async function adbConnect(target: string): Promise<boolean> {
   let output: string;
   try {
-    output = await adb(`connect ${target}`);
+    output = await adb(['connect', target]);
   } catch {
     // adb connect can throw on timeout or non-zero exit when hitting a
     // non-ADB port (e.g., other Samsung services). Treat as failed connect.
@@ -27,9 +32,9 @@ async function adbConnect(target: string): Promise<boolean> {
   }
   if (output.includes('connected to')) {
     // Verify device is actually online (not "offline" state)
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, ADB_CONNECT_VERIFY_DELAY_MS));
     try {
-      const devices = await adb('devices');
+      const devices = await adb(['devices']);
       const line = devices.split('\n').find((l) => l.startsWith(target));
       return !!line && line.includes('\tdevice');
     } catch {
@@ -41,18 +46,18 @@ async function adbConnect(target: string): Promise<boolean> {
 
 async function disconnectStale(ip: string): Promise<void> {
   try {
-    const devices = await adb('devices');
+    const devices = await adb(['devices']);
     const lines = devices.split('\n').filter((l) => l.includes(ip));
     for (const line of lines) {
       const dev = line.split('\t')[0];
       if (dev) {
-        try { await adb(`disconnect ${dev}`); } catch {}
+        try { await adb(['disconnect', dev]); } catch {}
       }
     }
   } catch {}
 }
 
-function checkPort(ip: string, port: number, timeout = 1000): Promise<boolean> {
+function checkPort(ip: string, port: number, timeout: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(timeout);
@@ -137,7 +142,7 @@ export async function resetAdbServer(): Promise<void> {
   // matches, adb refuses to connect even though the port is reachable.
   // Killing the server clears this cache. mDNS-discovered devices reconnect
   // automatically; USB devices reconnect on next command.
-  try { await adb('kill-server'); } catch {}
+  try { await adb(['kill-server']); } catch {}
 }
 
 export async function connectAdbWifi(
@@ -152,7 +157,7 @@ export async function connectAdbWifi(
   // Check if port 5555 is already open
   checkAborted(signal);
   onProgress({ phase: 'checking-5555', detail: `Checking ${ip}:5555` });
-  if (await checkPort(ip, 5555)) {
+  if (await checkPort(ip, 5555, ADB_PORT_CHECK_TIMEOUT_MS)) {
     checkAborted(signal);
     onProgress({ phase: 'connecting', detail: 'Port 5555 already open, connecting...' });
     const connected = await adbConnect(`${ip}:5555`);
@@ -172,7 +177,7 @@ export async function connectAdbWifi(
     checkAborted(signal);
     onProgress({ phase: 'scanning', retry: retry + 1 });
     if (retry > 0) {
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, ADB_SCAN_RETRY_DELAY_MS));
     }
     ports = await scanPorts(ip, (start, end) => {
       onProgress({ phase: 'scanning', retry: retry + 1, detail: `Ports ${start}–${end}` });
@@ -199,7 +204,7 @@ export async function connectAdbWifi(
       break;
     }
     onProgress({ phase: 'connecting', detail: `Port ${port} is not ADB, trying next...` });
-    try { await adb(`disconnect ${ip}:${port}`); } catch {}
+    try { await adb(['disconnect', `${ip}:${port}`]); } catch {}
   }
 
   if (connectedPort === null) {
@@ -210,14 +215,14 @@ export async function connectAdbWifi(
     throw new Error(NO_DEBUG_PORT_ERROR);
   }
 
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, ADB_SWITCH_SETTLE_MS));
   checkAborted(signal);
 
   // Switch to port 5555
   onProgress({ phase: 'switching', detail: `Switching ${ip}:${connectedPort} to tcpip 5555` });
-  await adb(`-s ${ip}:${connectedPort} tcpip 5555`);
+  await adb(['-s', `${ip}:${connectedPort}`, 'tcpip', '5555']);
 
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, ADB_SWITCH_SETTLE_MS));
   checkAborted(signal);
 
   // Connect on 5555
@@ -229,7 +234,7 @@ export async function connectAdbWifi(
 
   // Disconnect from wireless debugging port
   onProgress({ phase: 'disconnecting', detail: `Disconnecting debug port ${ip}:${connectedPort}` });
-  try { await adb(`disconnect ${ip}:${connectedPort}`); } catch {}
+  try { await adb(['disconnect', `${ip}:${connectedPort}`]); } catch {}
 
   // Disable wireless debugging
   await disableDebug(ip, syncDevice, onProgress);
@@ -237,13 +242,13 @@ export async function connectAdbWifi(
   // Disconnect any extra connections, keep only 5555
   onProgress({ phase: 'cleanup', detail: 'Cleaning up extra connections' });
   try {
-    const devices = await adb('devices');
+    const devices = await adb(['devices']);
     const lines = devices.split('\n').filter((l) => l.includes('\t'));
     for (const line of lines) {
       const dev = line.split('\t')[0];
       if (dev && !dev.includes(`${ip}:5555`)) {
         onProgress({ phase: 'cleanup', detail: `Disconnecting ${dev}` });
-        try { await adb(`disconnect ${dev}`); } catch {}
+        try { await adb(['disconnect', dev]); } catch {}
       }
     }
   } catch {}
@@ -254,8 +259,8 @@ export async function connectAdbWifi(
 
 async function disableDebug(ip: string, syncDevice: string | undefined, onProgress: (progress: AdbProgress) => void) {
   onProgress({ phase: 'disabling-debug', detail: 'Disabling wireless debugging (ADB)' });
-  try { await adb(`-s ${ip}:5555 shell svc wifi debug disable`); } catch {}
-  try { await adb(`-s ${ip}:5555 shell settings put global adb_wifi_enabled 0`); } catch {}
+  try { await adb(['-s', `${ip}:5555`, 'shell', 'svc', 'wifi', 'debug', 'disable']); } catch {}
+  try { await adb(['-s', `${ip}:5555`, 'shell', 'settings', 'put', 'global', 'adb_wifi_enabled', '0']); } catch {}
   if (syncDevice) {
     onProgress({ phase: 'disabling-debug', detail: `Disabling wireless debugging via Tasker (${syncDevice})` });
     try {
@@ -274,6 +279,6 @@ async function grantTaskerPermissions(ip: string, onProgress: (progress: AdbProg
       phase: 'granting-permissions',
       detail: `Tasker: ${shortName} (${i + 1}/${TASKER_PERMISSIONS.length})`,
     });
-    try { await adb(`-s ${ip}:5555 shell pm grant ${TASKER_PACKAGE} ${perm}`); } catch {}
+    try { await adb(['-s', `${ip}:5555`, 'shell', 'pm', 'grant', TASKER_PACKAGE, perm]); } catch {}
   }
 }

@@ -52,6 +52,8 @@ src/
 
 **Authentication**: Session-based. Flow: `GET /login.asp` (get session cookie) → `POST /cgi-bin/te_acceso_router.cgi` (XOR-encoded credentials) → verify by checking `/settings-local-network.asp`.
 
+> **Security note**: The firmware uses XOR-0x1f encoding, which is obfuscation — not encryption. All traffic is plain HTTP with no TLS. Only run this tool on a trusted LAN; never expose the router's management interface to untrusted networks.
+
 **Reboot Flow** (`src/commands/Reboot.tsx`):
 1. Discover router IP
 2. Authenticate
@@ -91,7 +93,7 @@ Append `--json` to any flag for structured JSON output (scripting/automation).
 ## Router API Notes
 
 - **Firmware**: Askey RTF8225VW (Vivo Brasil)
-- **Credentials encoding**: XOR with `0x1f` before POST
+- **Credentials encoding**: XOR with `0x1f` before POST — firmware obfuscation only, not encryption; traffic is plain HTTP
 - **Session key**: Required for reboot and other mutating operations — extracted from HTML via regex `sessionKey='([^']+)'`
 - **DHCP leases format**: Pipe-separated entries, slash-separated fields: `iid/hostname/mac/ip/leaseSeconds/…`
 - **System logs**: Retrieved via `sv_setvar.cmd` with `varValue=1` — this is idempotent and read-safe despite using setvar endpoint

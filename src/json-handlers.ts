@@ -10,6 +10,9 @@ import { enableWirelessDebugging, getSyncDeviceName } from './lib/tasker.js';
 
 const execAsync = promisify(exec);
 
+// macOS: ping -W is in milliseconds. Linux: ping -W is in seconds.
+const PING_WAIT_1S = process.platform === 'darwin' ? '1000' : '1';
+
 function output(data: unknown): void {
   console.log(JSON.stringify(data));
 }
@@ -217,7 +220,7 @@ const MAX_ONLINE_WAIT_MS = 10 * 60 * 1000;
 
 async function pingHost(ip: string): Promise<boolean> {
   try {
-    await execAsync(`ping -c 1 -W 1000 ${ip}`);
+    await execAsync(`ping -c 1 -W ${PING_WAIT_1S} ${ip}`);
     return true;
   } catch {
     return false;

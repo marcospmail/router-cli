@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Text, Box } from 'ink';
 import { Status } from '../components/Status.js';
 import { CredentialPrompt } from '../components/CredentialPrompt.js';
@@ -10,6 +10,9 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+// macOS: ping -W is in milliseconds. Linux: ping -W is in seconds.
+const PING_WAIT_1S = process.platform === 'darwin' ? '1000' : '1';
 
 type Phase =
   | 'check-creds'
@@ -27,32 +30,48 @@ export function Reboot({ onBack }: { onBack?: () => void }) {
   const [routerIp, setRouterIp] = useState('');
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  const mountedRef = useRef(true);
+  const abortRef = useRef(new AbortController());
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      abortRef.current.abort();
+    };
+  }, []);
+
+  const safeSetPhase = (p: Phase) => { if (mountedRef.current) setPhase(p); };
+  const safeSetRouterIp = (ip: string) => { if (mountedRef.current) setRouterIp(ip); };
+  const safeSetError = (e: string) => { if (mountedRef.current) setError(e); };
+  const safeSetElapsed = (s: number) => { if (mountedRef.current) setElapsed(s); };
 
   const run = async (username: string, password: string, isNew: boolean) => {
+    const signal = abortRef.current.signal;
     try {
-      setPhase('discover');
+      safeSetPhase('discover');
       const ip = await discoverRouter();
-      setRouterIp(ip);
+      safeSetRouterIp(ip);
 
-      setPhase('auth');
+      safeSetPhase('auth');
       const cookie = await login(ip, { username, password });
       if (isNew) saveCredentials({ username, password });
 
-      setPhase('reboot-init');
+      safeSetPhase('reboot-init');
       const sessionKey = await getRebootSessionKey(ip, cookie);
       await rebootRouter(ip, cookie, sessionKey);
 
-      setPhase('wait-offline');
-      await waitForOffline(ip, setElapsed);
+      safeSetPhase('wait-offline');
+      await waitForOffline(ip, safeSetElapsed, signal);
 
-      setPhase('wait-online');
-      setElapsed(0);
-      await waitForOnline(ip, setElapsed);
+      safeSetPhase('wait-online');
+      safeSetElapsed(0);
+      await waitForOnline(ip, safeSetElapsed, signal);
 
-      setPhase('done');
+      safeSetPhase('done');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPhase('error');
+      if (signal.aborted) return;
+      safeSetError(err instanceof Error ? err.message : String(err));
+      safeSetPhase('error');
     }
   };
 
@@ -140,14 +159,17 @@ function isAfter(current: Phase, target: Phase): boolean {
 
 const MAX_OFFLINE_WAIT_MS = 5 * 60 * 1000;
 const MAX_ONLINE_WAIT_MS = 10 * 60 * 1000;
+const OFFLINE_POLL_INTERVAL_MS = 1000;
+const ONLINE_POLL_INTERVAL_MS = 2000;
 
-async function waitForOffline(ip: string, onElapsed: (s: number) => void): Promise<void> {
+async function waitForOffline(ip: string, onElapsed: (s: number) => void, signal: AbortSignal): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < MAX_OFFLINE_WAIT_MS) {
+    if (signal.aborted) return;
     onElapsed(Math.round((Date.now() - start) / 1000));
     try {
-      await execAsync(`ping -c 1 -W 1000 ${ip}`);
-      await sleep(1000);
+      await execAsync(`ping -c 1 -W ${PING_WAIT_1S} ${ip}`);
+      await sleep(OFFLINE_POLL_INTERVAL_MS);
     } catch {
       return;
     }
@@ -155,15 +177,16 @@ async function waitForOffline(ip: string, onElapsed: (s: number) => void): Promi
   throw new Error('Timed out waiting for router to go offline (5 min)');
 }
 
-async function waitForOnline(ip: string, onElapsed: (s: number) => void): Promise<void> {
+async function waitForOnline(ip: string, onElapsed: (s: number) => void, signal: AbortSignal): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < MAX_ONLINE_WAIT_MS) {
+    if (signal.aborted) return;
     onElapsed(Math.round((Date.now() - start) / 1000));
     try {
-      await execAsync(`ping -c 1 -W 1000 ${ip}`);
+      await execAsync(`ping -c 1 -W ${PING_WAIT_1S} ${ip}`);
       return;
     } catch {
-      await sleep(2000);
+      await sleep(ONLINE_POLL_INTERVAL_MS);
     }
   }
   throw new Error('Timed out waiting for router to come back online (10 min)');

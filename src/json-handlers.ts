@@ -47,39 +47,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 const ANDROID_PATTERNS = ['S25', 'Pixel', 'Tab S9'];
 const PER_DEVICE_TIMEOUT_MS = 30000;
 
-const ENABLE_DEBUG_WAIT_MS = 5000;
+const ENABLE_DEBUG_POLL_INTERVAL_MS = 5000;
+const ENABLE_DEBUG_TOTAL_BUDGET_MS = 3 * 60 * 1000;
 
 async function connectDeviceJson(ip: string, syncDevice?: string): Promise<{ status: string; detail: string; phases: string[] }> {
   const phases: string[] = [];
   const log = (msg: string) => phases.push(msg);
+  const onProgress = (p: { phase: string; detail?: string }) => log(`${p.phase}: ${p.detail ?? ''}`);
 
   try {
     await withTimeout(
-      connectAdbWifi(ip, (p) => log(`${p.phase}: ${p.detail ?? ''}`), undefined, syncDevice),
+      connectAdbWifi(ip, onProgress, undefined, syncDevice),
       PER_DEVICE_TIMEOUT_MS,
       `ADB connect ${ip}`,
     );
     return { status: 'connected', detail: `Connected to ${ip}:5555`, phases };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg === NO_DEBUG_PORT_ERROR && syncDevice) {
-      log('Enabling wireless debugging via Tasker...');
+    if (msg !== NO_DEBUG_PORT_ERROR || !syncDevice) {
+      return { status: 'error', detail: msg, phases };
+    }
+
+    log('Enabling wireless debugging via Tasker...');
+    try {
       await enableWirelessDebugging(syncDevice);
-      log(`Waiting ${ENABLE_DEBUG_WAIT_MS / 1000}s for activation...`);
-      await new Promise((r) => setTimeout(r, ENABLE_DEBUG_WAIT_MS));
-      log('Retrying connection...');
+    } catch (taskerErr) {
+      return { status: 'error', detail: taskerErr instanceof Error ? taskerErr.message : String(taskerErr), phases };
+    }
+
+    const deadline = Date.now() + ENABLE_DEBUG_TOTAL_BUDGET_MS;
+    let attempt = 0;
+    let lastErr = msg;
+
+    while (Date.now() < deadline) {
+      attempt++;
+      const remainingSec = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      log(`Waiting ${ENABLE_DEBUG_POLL_INTERVAL_MS / 1000}s before attempt ${attempt} (${remainingSec}s left)...`);
+      await new Promise((r) => setTimeout(r, ENABLE_DEBUG_POLL_INTERVAL_MS));
+
+      log(`Attempt ${attempt}...`);
       try {
         await withTimeout(
-          connectAdbWifi(ip, (p) => log(`${p.phase}: ${p.detail ?? ''}`), undefined, syncDevice),
+          connectAdbWifi(ip, onProgress, undefined, syncDevice),
           PER_DEVICE_TIMEOUT_MS,
           `ADB retry ${ip}`,
         );
-        return { status: 'connected', detail: `Connected to ${ip}:5555 (after enabling debug)`, phases };
+        return { status: 'connected', detail: `Connected to ${ip}:5555 (after enabling debug, attempt ${attempt})`, phases };
       } catch (retryErr) {
-        return { status: 'error', detail: retryErr instanceof Error ? retryErr.message : String(retryErr), phases };
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        lastErr = retryMsg;
+        if (retryMsg !== NO_DEBUG_PORT_ERROR && !retryMsg.startsWith('Timeout:')) {
+          return { status: 'error', detail: retryMsg, phases };
+        }
       }
     }
-    return { status: 'error', detail: msg, phases };
+
+    return { status: 'error', detail: `Gave up after ${ENABLE_DEBUG_TOTAL_BUDGET_MS / 1000}s of polling (${attempt} attempts). Last error: ${lastErr}`, phases };
   }
 }
 

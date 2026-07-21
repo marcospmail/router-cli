@@ -10,7 +10,8 @@
     "build": "bun run build.ts",
     "dev": "bun --watch run build.ts",
     "start": "bun dist/cli.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "keywords": [
     "cli",

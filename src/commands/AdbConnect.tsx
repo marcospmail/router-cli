@@ -13,7 +13,9 @@ import { enableWirelessDebugging, getSyncDeviceName } from '../lib/tasker.js';
 type Phase = 'check-creds' | 'prompt-creds' | 'discover' | 'auth' | 'fetch' | 'connecting' | 'done' | 'error';
 
 const ANDROID_PATTERNS = ['S25', 'Pixel', 'Tab S9'];
-const ENABLE_DEBUG_WAIT_MS = 5000;
+const ENABLE_DEBUG_POLL_INTERVAL_MS = 5000;
+const ENABLE_DEBUG_TOTAL_BUDGET_MS = 3 * 60 * 1000;
+const CANCELLED_ERROR = 'Cancelled';
 
 interface AndroidDevice {
   ip: string;
@@ -134,46 +136,79 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
             })
             .catch(async (err) => {
               const msg = err instanceof Error ? err.message : String(err);
-              if (msg === NO_DEBUG_PORT_ERROR && dev.syncDevice) {
-                // Auto-enable wireless debugging and retry
-                safeSetDevices((prev) =>
-                  prev.map((d, idx) =>
-                    idx === i ? { ...d, adbPhase: 'enabling-debug', detail: 'Enabling wireless debugging via Tasker...' } : d,
-                  ),
-                );
-                try {
-                  await enableWirelessDebugging(dev.syncDevice);
-                  safeSetDevices((prev) =>
-                    prev.map((d, idx) =>
-                      idx === i ? { ...d, detail: `Waiting ${ENABLE_DEBUG_WAIT_MS / 1000}s for activation...` } : d,
-                    ),
-                  );
-                  await new Promise((r) => setTimeout(r, ENABLE_DEBUG_WAIT_MS));
-                  safeSetDevices((prev) =>
-                    prev.map((d, idx) =>
-                      idx === i ? { ...d, adbPhase: 'scanning', detail: 'Retrying...' } : d,
-                    ),
-                  );
-                  await connectAdbWifi(dev.ip, onProgress, abortRef.current.signal, dev.syncDevice);
-                  safeSetDevices((prev) =>
-                    prev.map((d, idx) => (idx === i ? { ...d, status: 'done' } : d)),
-                  );
-                } catch (retryErr) {
-                  safeSetDevices((prev) =>
-                    prev.map((d, idx) =>
-                      idx === i
-                        ? { ...d, status: 'error', detail: retryErr instanceof Error ? retryErr.message : String(retryErr) }
-                        : d,
-                    ),
-                  );
-                }
-              } else {
+              if (msg !== NO_DEBUG_PORT_ERROR || !dev.syncDevice) {
                 safeSetDevices((prev) =>
                   prev.map((d, idx) =>
                     idx === i ? { ...d, status: 'error', detail: msg } : d,
                   ),
                 );
+                return;
               }
+
+              safeSetDevices((prev) =>
+                prev.map((d, idx) =>
+                  idx === i ? { ...d, adbPhase: 'enabling-debug', detail: 'Enabling wireless debugging via Tasker...' } : d,
+                ),
+              );
+              try {
+                await enableWirelessDebugging(dev.syncDevice);
+              } catch (taskerErr) {
+                safeSetDevices((prev) =>
+                  prev.map((d, idx) =>
+                    idx === i ? { ...d, status: 'error', detail: taskerErr instanceof Error ? taskerErr.message : String(taskerErr) } : d,
+                  ),
+                );
+                return;
+              }
+
+              const deadline = Date.now() + ENABLE_DEBUG_TOTAL_BUDGET_MS;
+              let attempt = 0;
+              let lastErr = msg;
+
+              while (Date.now() < deadline) {
+                attempt++;
+                const remainingSec = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+                safeSetDevices((prev) =>
+                  prev.map((d, idx) =>
+                    idx === i ? { ...d, adbPhase: 'enabling-debug', detail: `Waiting ${ENABLE_DEBUG_POLL_INTERVAL_MS / 1000}s before attempt ${attempt} (${remainingSec}s left)...` } : d,
+                  ),
+                );
+                await new Promise((r) => setTimeout(r, ENABLE_DEBUG_POLL_INTERVAL_MS));
+                if (abortRef.current.signal.aborted) return;
+
+                safeSetDevices((prev) =>
+                  prev.map((d, idx) =>
+                    idx === i ? { ...d, adbPhase: 'scanning', detail: `Attempt ${attempt}...` } : d,
+                  ),
+                );
+                try {
+                  await connectAdbWifi(dev.ip, onProgress, abortRef.current.signal, dev.syncDevice);
+                  safeSetDevices((prev) =>
+                    prev.map((d, idx) => (idx === i ? { ...d, status: 'done' } : d)),
+                  );
+                  return;
+                } catch (retryErr) {
+                  const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                  lastErr = retryMsg;
+                  if (retryMsg === CANCELLED_ERROR) return;
+                  if (retryMsg !== NO_DEBUG_PORT_ERROR) {
+                    safeSetDevices((prev) =>
+                      prev.map((d, idx) =>
+                        idx === i ? { ...d, status: 'error', detail: retryMsg } : d,
+                      ),
+                    );
+                    return;
+                  }
+                }
+              }
+
+              safeSetDevices((prev) =>
+                prev.map((d, idx) =>
+                  idx === i
+                    ? { ...d, status: 'error', detail: `Gave up after ${ENABLE_DEBUG_TOTAL_BUDGET_MS / 1000}s of polling (${attempt} attempts). Last error: ${lastErr}` }
+                    : d,
+                ),
+              );
             });
         }),
       );
@@ -218,6 +253,7 @@ export function AdbConnect({ onBack }: { onBack?: () => void }) {
   const adbPhaseLabel = (dev: AndroidDevice): string => {
     switch (dev.adbPhase) {
       case 'checking-5555': return dev.detail ?? 'Checking port 5555';
+      case 'mdns-discovery': return dev.detail ?? 'Checking mDNS for debug port';
       case 'scanning': return dev.detail ?? 'Scanning for debug port';
       case 'connecting': return dev.detail ?? 'Connecting';
       case 'switching': return dev.detail ?? 'Switching to port 5555';

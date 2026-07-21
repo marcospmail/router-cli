@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import net from 'net';
 import { disableWirelessDebugging } from './tasker.js';
+import { discoverPortViaMdns } from './adb-mdns.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -115,6 +116,7 @@ const TASKER_PERMISSIONS = [
 
 export type AdbPhase =
   | 'checking-5555'
+  | 'mdns-discovery'
   | 'scanning'
   | 'connecting'
   | 'switching'
@@ -170,49 +172,69 @@ export async function connectAdbWifi(
     onProgress({ phase: 'connecting', detail: 'Port 5555 open but ADB failed, scanning...' });
   }
 
-  // Scan for wireless debugging port
-  onProgress({ phase: 'scanning', detail: 'Scanning for wireless debugging port...' });
-  let ports: number[] = [];
-  for (let retry = 0; retry < MAX_RETRIES; retry++) {
-    checkAborted(signal);
-    onProgress({ phase: 'scanning', retry: retry + 1 });
-    if (retry > 0) {
-      await new Promise((r) => setTimeout(r, ADB_SCAN_RETRY_DELAY_MS));
-    }
-    ports = await scanPorts(ip, (start, end) => {
-      onProgress({ phase: 'scanning', retry: retry + 1, detail: `Ports ${start}–${end}` });
-    }, signal);
-    if (ports.length > 0) break;
-  }
-
-  if (ports.length === 0) {
-    onProgress({
-      phase: 'error',
-      detail: 'No wireless debugging port found. Make sure Wireless Debugging is enabled.',
-    });
-    throw new Error(NO_DEBUG_PORT_ERROR);
-  }
-
-  // Try each found port until one actually connects via ADB
+  // Try mDNS discovery first (macOS only); much faster than brute-force scanning
   let connectedPort: number | null = null;
-  for (const port of ports) {
+  checkAborted(signal);
+  onProgress({ phase: 'mdns-discovery', detail: 'Checking mDNS for wireless debugging port...' });
+  const mdnsOutcome = await discoverPortViaMdns(ip, signal);
+  if (mdnsOutcome.found) {
     checkAborted(signal);
-    onProgress({ phase: 'connecting', detail: `Found port ${port}, connecting to ${ip}:${port}` });
-    const connected = await adbConnect(`${ip}:${port}`);
-    if (connected) {
-      connectedPort = port;
-      break;
+    onProgress({ phase: 'connecting', detail: `mDNS found port ${mdnsOutcome.port}, connecting to ${ip}:${mdnsOutcome.port}` });
+    if (await adbConnect(`${ip}:${mdnsOutcome.port}`)) {
+      connectedPort = mdnsOutcome.port;
+    } else {
+      onProgress({ phase: 'connecting', detail: `mDNS port ${mdnsOutcome.port} is not ADB, falling back to scan...` });
+      try { await adb(['disconnect', `${ip}:${mdnsOutcome.port}`]); } catch {}
     }
-    onProgress({ phase: 'connecting', detail: `Port ${port} is not ADB, trying next...` });
-    try { await adb(['disconnect', `${ip}:${port}`]); } catch {}
+  } else {
+    const countSuffix = 'instanceCount' in mdnsOutcome ? `, ${mdnsOutcome.instanceCount} instance(s)` : '';
+    onProgress({ phase: 'mdns-discovery', detail: `mDNS unavailable (${mdnsOutcome.reason}${countSuffix}), falling back to scan...` });
   }
 
   if (connectedPort === null) {
-    onProgress({
-      phase: 'error',
-      detail: `Found ${ports.length} open port(s) but none responded to ADB. Ensure Wireless Debugging is enabled.`,
-    });
-    throw new Error(NO_DEBUG_PORT_ERROR);
+    // Scan for wireless debugging port
+    onProgress({ phase: 'scanning', detail: 'Scanning for wireless debugging port...' });
+    let ports: number[] = [];
+    for (let retry = 0; retry < MAX_RETRIES; retry++) {
+      checkAborted(signal);
+      onProgress({ phase: 'scanning', retry: retry + 1 });
+      if (retry > 0) {
+        await new Promise((r) => setTimeout(r, ADB_SCAN_RETRY_DELAY_MS));
+      }
+      ports = await scanPorts(ip, (start, end) => {
+        onProgress({ phase: 'scanning', retry: retry + 1, detail: `Ports ${start}–${end}` });
+      }, signal);
+      if (ports.length > 0) break;
+    }
+
+    if (ports.length === 0) {
+      onProgress({
+        phase: 'error',
+        detail: 'No wireless debugging port found. Make sure Wireless Debugging is enabled.',
+      });
+      throw new Error(NO_DEBUG_PORT_ERROR);
+    }
+
+    // Try each found port until one actually connects via ADB
+    for (const port of ports) {
+      checkAborted(signal);
+      onProgress({ phase: 'connecting', detail: `Found port ${port}, connecting to ${ip}:${port}` });
+      const connected = await adbConnect(`${ip}:${port}`);
+      if (connected) {
+        connectedPort = port;
+        break;
+      }
+      onProgress({ phase: 'connecting', detail: `Port ${port} is not ADB, trying next...` });
+      try { await adb(['disconnect', `${ip}:${port}`]); } catch {}
+    }
+
+    if (connectedPort === null) {
+      onProgress({
+        phase: 'error',
+        detail: `Found ${ports.length} open port(s) but none responded to ADB. Ensure Wireless Debugging is enabled.`,
+      });
+      throw new Error(NO_DEBUG_PORT_ERROR);
+    }
   }
 
   await new Promise((r) => setTimeout(r, ADB_SWITCH_SETTLE_MS));

@@ -5,7 +5,7 @@ import { login, getDhcpLeases, getWanStatus, getRouterDeviceInfo, getDhcpConfig,
 import { getCredentials } from './lib/credentials.js';
 import { getDeviceInfo } from './lib/devices.js';
 import { pingSweep, getArpTable } from './lib/network-scan.js';
-import { connectAdbWifi, resetAdbServer, NO_DEBUG_PORT_ERROR } from './lib/adb-wifi.js';
+import { connectAdbWifi, hasLiveAdbLink, isDebugPortMissing, TIMEOUT_ERROR_PREFIX } from './lib/adb-wifi.js';
 import { enableWirelessDebugging, getSyncDeviceName } from './lib/tasker.js';
 
 const execAsync = promisify(exec);
@@ -36,7 +36,7 @@ async function getAuthenticatedSession(): Promise<{ routerIp: string; cookie: st
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms);
+    const timer = setTimeout(() => reject(new Error(`${TIMEOUT_ERROR_PREFIX} ${label} (${ms}ms)`)), ms);
     promise.then(
       (v) => { clearTimeout(timer); resolve(v); },
       (e) => { clearTimeout(timer); reject(e); },
@@ -64,7 +64,7 @@ async function connectDeviceJson(ip: string, syncDevice?: string): Promise<{ sta
     return { status: 'connected', detail: `Connected to ${ip}:5555`, phases };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg !== NO_DEBUG_PORT_ERROR || !syncDevice) {
+    if (!isDebugPortMissing(msg) || !syncDevice) {
       return { status: 'error', detail: msg, phases };
     }
 
@@ -96,7 +96,7 @@ async function connectDeviceJson(ip: string, syncDevice?: string): Promise<{ sta
       } catch (retryErr) {
         const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
         lastErr = retryMsg;
-        if (retryMsg !== NO_DEBUG_PORT_ERROR && !retryMsg.startsWith('Timeout:')) {
+        if (!isDebugPortMissing(retryMsg)) {
           return { status: 'error', detail: retryMsg, phases };
         }
       }
@@ -125,10 +125,17 @@ async function handleAdb(): Promise<void> {
     return;
   }
 
-  await resetAdbServer();
+  // Leave devices that already have a working link alone. The adb server is
+  // never restarted here: that drops every link, and a server started by hand
+  // (e.g. as root to get past macOS Local Network privacy) would be replaced
+  // by one that cannot reach the LAN.
+  const alreadyLive = await Promise.all(androidDevices.map((dev) => hasLiveAdbLink(dev.ip)));
 
   const results = await Promise.all(
-    androidDevices.map(async (dev) => {
+    androidDevices.map(async (dev, i) => {
+      if (alreadyLive[i]) {
+        return { ip: dev.ip, name: dev.name, status: 'connected', detail: `Already connected to ${dev.ip}:5555`, phases: [] };
+      }
       try {
         const result = await connectDeviceJson(dev.ip, dev.syncDevice);
         return { ip: dev.ip, name: dev.name, ...result };

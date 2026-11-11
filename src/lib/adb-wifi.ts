@@ -130,6 +130,14 @@ export type AdbPhase =
   | 'error';
 
 export const NO_DEBUG_PORT_ERROR = 'No wireless debugging port found';
+export const TIMEOUT_ERROR_PREFIX = 'Timeout:';
+
+// True when an error means the device offers no wireless debugging port, i.e.
+// debugging is probably off. A timeout counts too: the full port scan takes
+// longer than the per-device timeout, so it rarely gets to report "no port".
+export function isDebugPortMissing(msg: string): boolean {
+  return msg === NO_DEBUG_PORT_ERROR || msg.startsWith(TIMEOUT_ERROR_PREFIX);
+}
 
 export interface AdbProgress {
   phase: AdbPhase;
@@ -145,6 +153,23 @@ export async function resetAdbServer(): Promise<void> {
   // Killing the server clears this cache. mDNS-discovered devices reconnect
   // automatically; USB devices reconnect on next command.
   try { await adb(['kill-server']); } catch {}
+}
+
+// True when `adb devices` output lists target as online ("device", not "offline").
+export function isListedOnline(devicesOutput: string, target: string): boolean {
+  return devicesOutput.split('\n').some((l) => l.startsWith(`${target}\t`) && l.includes('\tdevice'));
+}
+
+// True when adb already holds a working link to ip:5555. `adb devices` can
+// still list a dead TCP link as "device", so confirm with a real shell round trip.
+export async function hasLiveAdbLink(ip: string): Promise<boolean> {
+  const target = `${ip}:5555`;
+  try {
+    if (!isListedOnline(await adb(['devices']), target)) return false;
+    return (await adb(['-s', target, 'shell', 'echo', 'ok'])) === 'ok';
+  } catch {
+    return false;
+  }
 }
 
 export async function connectAdbWifi(
@@ -261,14 +286,15 @@ export async function connectAdbWifi(
   // Disable wireless debugging
   await disableDebug(ip, syncDevice, onProgress);
 
-  // Disconnect any extra connections, keep only 5555
+  // Disconnect this device's extra connections, keep only 5555. Other devices'
+  // links are left alone: devices connect in parallel, so they may be live.
   onProgress({ phase: 'cleanup', detail: 'Cleaning up extra connections' });
   try {
     const devices = await adb(['devices']);
     const lines = devices.split('\n').filter((l) => l.includes('\t'));
     for (const line of lines) {
       const dev = line.split('\t')[0];
-      if (dev && !dev.includes(`${ip}:5555`)) {
+      if (dev && dev.startsWith(`${ip}:`) && dev !== `${ip}:5555`) {
         onProgress({ phase: 'cleanup', detail: `Disconnecting ${dev}` });
         try { await adb(['disconnect', dev]); } catch {}
       }

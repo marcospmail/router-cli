@@ -6,7 +6,7 @@ const SYNC_API_URL = 'https://api.marcosp.com/sync/send';
 
 const SYNC_DEVICE_MAP: Record<string, string> = {
   'S25': 's25',
-  'Pixel': 'Pixel',
+  'Pixel': 'pixel-9-pro',
   'Tab S9': 'Tab',
 };
 

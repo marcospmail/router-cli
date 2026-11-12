@@ -107,7 +107,8 @@ async function scanPorts(ip: string, onBatch?: (start: number, end: number) => v
 const TASKER_PACKAGE = 'net.dinglisch.android.taskerm';
 const TASKER_PERMISSIONS = [
   'android.permission.WRITE_SECURE_SETTINGS',
-  'android.permission.READ_LOGS',
+  // READ_LOGS is left out on purpose: with it, Android 13+ shows an
+  // "Allow Tasker to access all device logs?" box every time Tasker reads logcat.
   'android.permission.DUMP',
   'android.permission.CHANGE_CONFIGURATION',
   'android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER',

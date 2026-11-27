@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { chmodSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 const result = await Bun.build({
@@ -22,5 +22,7 @@ if (!result.success) {
 const outPath = join('dist', 'cli.js');
 const content = readFileSync(outPath, 'utf-8');
 writeFileSync(outPath, `#!/usr/bin/env bun\n${content}`);
+// Make it runnable: the global `router-cli` link and Driver's ADB pipeline exec this file directly
+chmodSync(outPath, 0o755);
 
 console.log('Build complete: dist/cli.js');
